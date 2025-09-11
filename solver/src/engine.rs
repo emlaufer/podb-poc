@@ -267,6 +267,7 @@ impl<'a> Engine<'a> {
     pub fn load_processed(&mut self, processed: &pod2::lang::processor::PodlangOutput) {
         crate::custom::register_rules_from_batch(&mut self.rules, &processed.custom_batch);
         let goals = processed.request.templates().to_vec();
+        println!("Goals from request: {:?}", goals);
         let id0 = self.sched.new_id();
         self.sched.enqueue(Frame {
             id: id0,
@@ -466,6 +467,7 @@ impl<'a> Engine<'a> {
                 {
                     // Take the body premises added after this pending head was registered
                     let body = store.premises.split_off(p.base_premises_len);
+                    println!("BODY IS: {:?}", body);
                     store.premises.push((
                         head,
                         crate::types::OpTag::CustomDeduction {
@@ -1193,6 +1195,7 @@ fn record_head_step(
     head: pod2::middleware::Statement,
     tag: crate::types::OpTag,
 ) {
+    println!("RECORD HEAD STEP: {:?}", head);
     store.premises.push((head, tag.clone()));
     store.operation_count = store.operation_count.saturating_add(1);
     if let crate::types::OpTag::CopyStatement { source } = tag {

@@ -628,6 +628,19 @@ impl EdbView for ImmutableEdb {
     }
 
     fn get_secret_key(&self, public_key: &PublicKey) -> Option<&SecretKey> {
+        println!("MY KEYPAIRS ARE: {:?}, FOR {}", self.keypairs, public_key);
+        println!(
+            "First pari: {}",
+            self.keypairs.first_key_value().unwrap().0 .0
+        );
+        println!(
+            "GOT KEYPAIR: {:?}, with PK: {}",
+            self.keypairs.get(&OrderedPublicKey(*public_key)),
+            self.keypairs
+                .get(&OrderedPublicKey(*public_key))
+                .unwrap()
+                .public_key(),
+        );
         self.keypairs.get(&OrderedPublicKey(*public_key))
     }
 }

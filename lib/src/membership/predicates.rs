@@ -25,10 +25,11 @@ init_membership(state) = AND(
 /// )
 /// TODO: PublicKeyOf is broken ...
 pub const INVITE: &str = r#"
-invite(state, invite, private: admin_arr, admin_pk) = AND(
+invite(state, invite, private: admin_arr, admin_sk, admin_pk) = AND(
     DictContains(?state, "admins", ?admin_arr)
     ArrayContains(?admin_arr, 0, ?admin_pk)
     SignedBy(?invite, ?admin_pk)
+    PublicKeyOf(?admin_pk, ?admin_sk)
 )
 "#;
 

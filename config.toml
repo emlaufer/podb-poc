@@ -1,0 +1,16 @@
+# PODB Server Configuration
+# Copy this file to customize server settings
+
+[server]
+# Server bind address
+host = "0.0.0.0"
+port = 3000
+
+[membership]
+# Initial admin public keys
+# These admins will be set up when the server starts
+# Format: List of public key strings (base58 format as saved by the client)
+initial_admins = [
+    # Add your initial admin public keys here
+    "5CDJruHaJKmuBFyjMm3MhDvCoNhBeMZk3qZbYhDvRsaQC1HoLkYqE4J"
+]

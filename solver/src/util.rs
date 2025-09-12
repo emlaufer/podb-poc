@@ -158,7 +158,9 @@ pub fn proof_cost(store: &ConstraintStore) -> (usize, usize) {
                     q.push_back(p);
                 }
             }
-            OpTag::GeneratedContains { .. } | OpTag::FromLiterals => {}
+            OpTag::GeneratedContains { .. } 
+            | OpTag::GeneratedContainerInsert { .. } 
+            | OpTag::FromLiterals => {}
         }
     }
     (seen_stmts.len(), seen_inputs.len())
@@ -277,6 +279,16 @@ pub fn instantiate_goal(
             let a0 = arg_to_vr(&tmpl.args[0], bindings)?;
             let a1 = arg_to_vr(&tmpl.args[1], bindings)?;
             Some(Statement::PublicKeyOf(a0, a1))
+        }
+        Predicate::Native(NativePredicate::ContainerInsert) => {
+            if tmpl.args.len() != 4 {
+                return None;
+            }
+            let a0 = arg_to_vr(&tmpl.args[0], bindings)?;
+            let a1 = arg_to_vr(&tmpl.args[1], bindings)?;
+            let a2 = arg_to_vr(&tmpl.args[2], bindings)?;
+            let a3 = arg_to_vr(&tmpl.args[3], bindings)?;
+            Some(Statement::ContainerInsert(a0, a1, a2, a3))
         }
         _ => {
             panic!("Unrecognized predicate head: {}", tmpl.pred);

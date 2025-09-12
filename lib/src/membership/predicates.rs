@@ -27,7 +27,7 @@ init_membership(state) = AND(
 pub const INVITE: &str = r#"
 invite(state, invite, private: admin_arr, admin_sk, admin_pk) = AND(
     DictContains(?state, "admins", ?admin_arr)
-    ArrayContains(?admin_arr, 0, ?admin_pk)
+    SetContains(?admin_arr, ?admin_pk)
     SignedBy(?invite, ?admin_pk)
     PublicKeyOf(?admin_pk, ?admin_sk)
 )
@@ -59,9 +59,9 @@ accept_invite(state, invite_pk, private: invite) = AND(
 /// )
 /// TODO: container updates are not handled by the solver yet
 pub const UPDATE_STATE: &str = r#"
-update_state(old_state, new_state, private: old_member_set, new_member_set, invite_pk) = AND(
+update_state(old_state, new_state, old_member_set, new_member_set, private: invite_pk) = AND(
     accept_invite(?old_state, ?invite_pk)
-    //SetInsert(?new_member_set, ?old_member_set, ?invite_pk)
+    SetInsert(?new_member_set, ?old_member_set, ?invite_pk)
     DictContains(?old_state, "members", ?old_member_set)
     //DictUpdate(?new_state, ?old_state, "members", ?new_member_set)
 )

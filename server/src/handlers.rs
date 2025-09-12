@@ -27,7 +27,7 @@ impl MembershipService {
         for admin in initial_admins {
             initial_state.add_admin(admin);
         }
-        
+
         Self {
             current_state: initial_state,
             prover: MembershipProver::new(),
@@ -92,14 +92,6 @@ pub struct AcceptInviteResponse {
     pub success: bool,
 }
 
-#[derive(Serialize)]
-pub struct MembershipStateResponse {
-    pub admins: Vec<PublicKey>,
-    pub members: Vec<PublicKey>,
-    pub admin_count: usize,
-    pub member_count: usize,
-}
-
 #[instrument]
 pub async fn accept_invite(
     State(state): State<SharedState>,
@@ -130,26 +122,20 @@ pub async fn accept_invite(
 }
 
 #[instrument]
-pub async fn get_membership_state(
-    State(state): State<SharedState>,
-) -> Json<MembershipStateResponse> {
+pub async fn get_membership_state(State(state): State<SharedState>) -> Json<MembershipState> {
     info!("Membership state request received");
-    
+
     let service = state.read().await;
     let current_state = service.current_state();
-    
-    let response = MembershipStateResponse {
-        admins: current_state.admins.clone(),
-        members: current_state.members.clone(),
-        admin_count: current_state.admins.len(),
-        member_count: current_state.members.len(),
-    };
-    
+
+    let response = current_state.clone();
+
     info!(
         "Returning membership state: {} admins, {} members",
-        response.admin_count, response.member_count
+        response.admins.len(),
+        response.members.len()
     );
-    
+
     Json(response)
 }
 

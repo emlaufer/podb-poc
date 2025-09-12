@@ -48,6 +48,17 @@ pub fn derive_into_typed_value(input: TokenStream) -> TokenStream {
                                     dict_entries.insert(pod_key, value);
                                 };
                             }
+                            if segment.ident == "HashSet" {
+                                // Custom logic for HashSet fields
+                                return quote! {
+                                    let inner_values = self.#field_name.iter().cloned().map(|v| {let t: TypedValue = v.into(); t.into() }).collect::<HashSet::<pod2::middleware::Value>>();
+                                    let pod_key = Key::from(#field_name_str.to_string());
+                                    let set = pod2::middleware::containers::Set::new(5, inner_values).unwrap();
+                                    let typed_value: TypedValue = set.into();
+                                    let value: pod2::middleware::Value = typed_value.into();
+                                    dict_entries.insert(pod_key, value);
+                                };
+                            }
                         }
                     }
 

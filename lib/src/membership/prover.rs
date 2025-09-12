@@ -5,7 +5,7 @@ use pod2::{
     frontend::{MainPod, SignedDict, SignedDictBuilder},
     lang::parse,
     middleware::{
-        CustomPredicateBatch, Params, PublicKey, SecretKey, Signer as SignerTrait, TypedValue,
+        CustomPredicateBatch, Key, Params, PublicKey, SecretKey, Signer as SignerTrait, TypedValue,
         Value, containers::Dictionary,
     },
 };
@@ -16,6 +16,7 @@ use pod2_solver::{
     replay::build_pod_from_answer_top_level_public,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -50,28 +51,28 @@ impl std::fmt::Display for MembershipError {
 /// Represents membership state with admins and members
 #[derive(Debug, Clone, Serialize, Deserialize, IntoTypedValue)]
 pub struct MembershipState {
-    pub admins: Vec<PublicKey>,
-    pub members: Vec<PublicKey>,
+    pub admins: HashSet<PublicKey>,
+    pub members: HashSet<PublicKey>,
 }
 
 impl Default for MembershipState {
     fn default() -> Self {
         Self {
-            admins: Vec::new(),
-            members: Vec::new(),
+            admins: HashSet::new(),
+            members: HashSet::new(),
         }
     }
 }
 impl MembershipState {
     pub fn add_member(&mut self, member: PublicKey) {
         if !self.members.contains(&member) {
-            self.members.push(member);
+            self.members.insert(member);
         }
     }
 
     pub fn add_admin(&mut self, admin: PublicKey) {
         if !self.admins.contains(&admin) {
-            self.admins.push(admin);
+            self.admins.insert(admin);
         }
     }
 }
@@ -150,7 +151,7 @@ impl MembershipProver {
         F: FnOnce() -> edb::ImmutableEdb,
     {
         debug!("Pod request: {}", request);
-        
+
         let batch = self.create_membership_batch()?;
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
@@ -262,7 +263,7 @@ impl MembershipProver {
         invite_pod: &MainPod,
     ) -> Result<MainPod, MembershipError> {
         debug!("Input invite pod: {}", invite_pod);
-        
+
         let batch = self.create_membership_batch()?;
         let state_value = state.clone().to_pod_value();
         let invite_pk = invite_signer.public_key();
@@ -295,27 +296,44 @@ impl MembershipProver {
         accept_invite_pod: &MainPod,
     ) -> Result<MainPod, MembershipError> {
         debug!("Input accept_invite pod: {}", accept_invite_pod);
-        
+
         let batch = self.create_membership_batch()?;
         let old_state_value = old_state.clone().to_pod_value();
         let new_state_value = new_state.clone().to_pod_value();
+
+        let old_state_dict = match old_state_value.typed() {
+            TypedValue::Dictionary(dict) => dict.clone(),
+            _ => panic!(),
+        };
+        let new_state_dict = match new_state_value.typed() {
+            TypedValue::Dictionary(dict) => dict.clone(),
+            _ => panic!(),
+        };
+        let mut test = old_state_dict.clone();
+        test.insert(&Key::from("test"), &Value::new(TypedValue::Int(0)))
+            .unwrap();
+        let test_new = Value::new(TypedValue::Dictionary(test));
 
         let request = format!(
             r#"
             use _, _, _, update_state from 0x{}
             
             REQUEST(
-                update_state({}, {})
+                update_state({}, {}, {}, {})
             )
             "#,
             batch.id().encode_hex::<String>(),
             old_state_value,
             new_state_value,
+            old_state_dict.get(&Key::from("members")).unwrap(),
+            new_state_dict.get(&Key::from("members")).unwrap(),
         );
-
+        println!("REQUEST IS: {}", request);
         self.prove_with_request_and_edb(request, move || {
             edb::ImmutableEdbBuilder::new()
                 .add_main_pod(accept_invite_pod)
+                .add_full_dict(old_state_dict)
+                .add_full_dict(new_state_dict)
                 .build()
         })
     }
@@ -356,7 +374,7 @@ mod tests {
 
         // 1. Initialize membership state with admin
         let mut state = MembershipState::default();
-        state.admins.push(admin_signer.public_key());
+        state.add_admin(admin_signer.public_key());
 
         // This test shows the structure but won't run until we have proper membership predicates
         // For now we test basic functionality
@@ -380,12 +398,12 @@ mod tests {
         let mut state = MembershipState::default();
 
         // Add admin
-        state.admins.push(admin_key);
+        state.add_admin(admin_key);
         assert_eq!(state.admins.len(), 1);
         assert!(state.admins.contains(&admin_key));
 
         // Add member
-        state.members.push(member_key);
+        state.add_member(member_key);
         assert_eq!(state.members.len(), 1);
         assert!(state.members.contains(&member_key));
     }
@@ -442,8 +460,8 @@ mod tests {
         let member_key = PublicKey::new_rand_from_subgroup();
 
         let mut original_state = MembershipState::default();
-        original_state.admins.push(admin_key);
-        original_state.members.push(member_key);
+        original_state.add_admin(admin_key);
+        original_state.add_member(member_key);
 
         let cloned_state = original_state.clone();
 
@@ -464,13 +482,13 @@ mod tests {
         let mut state = MembershipState::default();
 
         // Add multiple admins
-        state.admins.push(admin1);
-        state.admins.push(admin2);
+        state.add_admin(admin1);
+        state.add_admin(admin2);
 
         // Add multiple members
-        state.members.push(member1);
-        state.members.push(member2);
-        state.members.push(member3);
+        state.add_member(member1);
+        state.add_member(member2);
+        state.add_member(member3);
 
         assert_eq!(state.admins.len(), 2);
         assert_eq!(state.members.len(), 3);
@@ -558,8 +576,8 @@ mod tests {
         let member_key = PublicKey::new_rand_from_subgroup();
 
         let mut state = MembershipState::default();
-        state.admins.push(admin_key);
-        state.members.push(member_key);
+        state.add_admin(admin_key);
+        state.add_member(member_key);
 
         // Test init_membership with non-empty state
         let result = prover.prove_init_membership(&state);
@@ -586,7 +604,7 @@ mod tests {
         let admin_sk = SecretKey::new_rand();
         let admin_signer = Signer(admin_sk);
 
-        state.admins.push(admin_signer.public_key());
+        state.add_admin(admin_signer.public_key());
 
         // Test the init_membership proof generation
         let result = prover.prove_invite(&state, invite_pk, &admin_signer);
@@ -613,7 +631,7 @@ mod tests {
         let admin_sk = SecretKey::new_rand();
         let admin_signer = Signer(admin_sk);
 
-        state.admins.push(admin_signer.public_key());
+        state.add_admin(admin_signer.public_key());
 
         // Test the init_membership proof generation
         let result = prover.prove_invite(&state, invite_signer.public_key(), &admin_signer);
@@ -658,7 +676,7 @@ mod tests {
         let admin_sk = SecretKey::new_rand();
         let admin_signer = Signer(admin_sk);
 
-        state.admins.push(admin_signer.public_key());
+        state.add_admin(admin_signer.public_key());
 
         // Test the init_membership proof generation
         let result = prover.prove_invite(&state, invite_signer.public_key(), &admin_signer);
@@ -694,7 +712,7 @@ mod tests {
         };
 
         let old_state = state.clone();
-        state.members.push(invite_signer.public_key());
+        state.add_member(invite_signer.public_key());
         let result = prover.prove_update_state(&old_state, &state, &accept_invite_pod);
 
         match result {
@@ -720,9 +738,10 @@ mod tests {
         let dict = Dictionary::new(5, values).unwrap();
         println!("{:?}", serde_json::to_string(&dict));
 
+        let admins = HashSet::from_iter(vec![PublicKey::new_rand_from_subgroup()]);
         let membership_state = MembershipState {
-            admins: vec![PublicKey::new_rand_from_subgroup()],
-            members: Vec::new(),
+            admins,
+            members: HashSet::new(),
         };
 
         println!("GOT VAL: {}", membership_state.to_pod_value());

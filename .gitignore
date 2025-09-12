@@ -2,3 +2,4 @@
 *.private
 *.pod
 target
+doc

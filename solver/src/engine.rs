@@ -833,6 +833,7 @@ impl<'a> Engine<'a> {
     ) -> Result<Vec<Choice>, EngineError> {
         trace!(pred = ?goal_pred, args = ?tmpl_args, "processing native goal");
         let handlers = self.registry.get(goal_pred);
+        println!("goal pred is: {:?}", goal_pred);
         if handlers.is_empty() {
             debug!(
                 ?goal_pred,
@@ -864,6 +865,7 @@ impl<'a> Engine<'a> {
                 PropagatorResult::Contradiction => {}
             }
         }
+        println!("LCOAL CHOICES ARE: {:?}", local_choices);
         trace!(pred = ?goal_pred, choices = local_choices.len(), waits = ?union_waits, "native goal outcome");
         Ok(local_choices)
     }

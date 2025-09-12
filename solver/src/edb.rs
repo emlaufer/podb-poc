@@ -3,12 +3,15 @@ use std::fmt::Debug;
 use pod2::{
     frontend::{MainPod, SignedDict},
     middleware::{
-        containers::Dictionary, CustomPredicateRef, Hash, Key, PublicKey, SecretKey, Statement,
-        StatementArg, Value, ValueRef,
+        containers::{Array, Dictionary, Set},
+        CustomPredicateRef, Hash, Key, PublicKey, SecretKey, Statement, StatementArg, TypedValue,
+        Value, ValueRef,
     },
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{json::JsonString, serde_as};
+
+use std::collections::HashMap;
 
 use crate::{types::PodRef, RawOrdValue};
 
@@ -44,6 +47,10 @@ pub trait EdbView {
 
     /// ContainsFromEntries support: get a value only if it comes from a full dictionary (generation).
     fn contains_full_value(&self, _root: &Hash, _key: &Key) -> Option<Value>;
+
+    /// Enumerate roots that can justify Insert(new_root,old_root,key,val) along with their provenance.
+    fn enumerate_insert_sources(&self, _key: &Key, _val: &Value)
+        -> Vec<(Hash, Hash, InsertSource)>;
 
     /// Enumerate existing custom heads matching the literal mask.
     /// `filters[i] = Some(v)` requires head arg i == v; `None` matches any.
@@ -85,6 +92,13 @@ pub trait EdbView {
 pub enum ContainsSource {
     Copied { pod: PodRef },
     GeneratedFromFullDict { root: Hash },
+}
+
+/// Provenance of an Insert(root,root,key,value) fact.
+#[derive(Clone, Debug)]
+pub enum InsertSource {
+    Copied { pod: PodRef },
+    GeneratedFromFullDict { new_root: Hash, old_root: Hash },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -297,9 +311,24 @@ impl ImmutableEdbBuilder {
         let root = dict.commitment();
         self.inner.full_dict_objs.insert(root, dict.clone());
         let entry = self.inner.full_dicts.entry(root).or_default();
+        //let mut to_insert = vec![];
         for (k, v) in dict.kvs().iter() {
             entry.insert(k.hash(), v.clone());
+
+            //match v.typed() {
+            //    TypedValue::Dictionary(dict) => {
+            //        to_insert.push(dict);
+            //    }
+            //    TypedValue::Set(set) => {
+            //
+            //    }
+            //    _ => {}
+            //}
         }
+
+        //for dict in to_insert {
+        //    self = self.add_full_dict(dict.clone());
+        //}
         self
     }
 
@@ -627,20 +656,56 @@ impl EdbView for ImmutableEdb {
             .collect()
     }
 
+    fn enumerate_insert_sources(&self, key: &Key, val: &Value) -> Vec<(Hash, Hash, InsertSource)> {
+        let mut out = Vec::new();
+
+        // From copied statements
+        let results = self.query(
+            PredicateKey::Native(pod2::middleware::NativePredicate::ContainerInsert),
+            &[
+                ArgSel::Val,                               // new_root (any)
+                ArgSel::Val,                               // old_root (any)
+                ArgSel::Literal(&Value::from(key.name())), // key (specific)
+                ArgSel::Literal(val),                      // value (specific)
+            ],
+        );
+        for (stmt, pod_ref) in results {
+            if let Statement::ContainerInsert(new_root_ref, old_root_ref, _, _) = &stmt {
+                if let (ValueRef::Literal(new_root_val), ValueRef::Literal(old_root_val)) =
+                    (new_root_ref, old_root_ref)
+                {
+                    let new_root = Hash::from(new_root_val.raw());
+                    let old_root = Hash::from(old_root_val.raw());
+                    out.push((new_root, old_root, InsertSource::Copied { pod: pod_ref }));
+                }
+            }
+        }
+
+        // From full dictionaries - create hash set of all known commitment hashes
+        let known_commitments: std::collections::HashSet<Hash> =
+            self.full_dict_objs.keys().cloned().collect();
+
+        // For each dictionary, try inserting key=val and see if result exists in known commitments
+        for (old_root, old_dict) in self.full_dict_objs.iter() {
+            let mut new_dict = old_dict.clone();
+            if new_dict.insert(key, val).is_ok() {
+                let new_commitment = new_dict.commitment();
+                if known_commitments.contains(&new_commitment) {
+                    out.push((
+                        new_commitment,
+                        *old_root,
+                        InsertSource::GeneratedFromFullDict {
+                            new_root: new_commitment,
+                            old_root: *old_root,
+                        },
+                    ));
+                }
+            }
+        }
+        out
+    }
+
     fn get_secret_key(&self, public_key: &PublicKey) -> Option<&SecretKey> {
-        println!("MY KEYPAIRS ARE: {:?}, FOR {}", self.keypairs, public_key);
-        println!(
-            "First pari: {}",
-            self.keypairs.first_key_value().unwrap().0 .0
-        );
-        println!(
-            "GOT KEYPAIR: {:?}, with PK: {}",
-            self.keypairs.get(&OrderedPublicKey(*public_key)),
-            self.keypairs
-                .get(&OrderedPublicKey(*public_key))
-                .unwrap()
-                .public_key(),
-        );
         self.keypairs.get(&OrderedPublicKey(*public_key))
     }
 }

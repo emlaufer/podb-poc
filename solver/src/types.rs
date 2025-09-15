@@ -50,6 +50,20 @@ pub enum OpTag {
         key: Key,
         value: Value,
     },
+    /// A ContainerUpdate premise that is justified because the solver has full dictionaries
+    /// and can generate the update fact (proof attached later at compilation time).
+    GeneratedContainerUpdate {
+        new_root: Hash, // The Merkle root of the new dictionary
+        old_root: Hash, // The Merkle root of the old dictionary
+        key: Key,
+        value: Value, // The new value that replaced whatever was at this key
+    },
+    /// A PublicKeyOf premise that is justified because the solver has the keypair
+    /// and can generate the public key from the secret key.
+    GeneratedPublicKeyOf {
+        secret_key: pod2::middleware::SecretKey,
+        public_key: pod2::middleware::PublicKey,
+    },
 }
 
 /// Provenance reference to a POD for CopyStatement.

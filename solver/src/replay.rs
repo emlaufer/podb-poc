@@ -474,8 +474,41 @@ fn map_to_operation(
                     }
                     Ok(Some(Operation::copy(head.clone())))
                 }
-                // TODO: Container update predicates should be supported
-                None | False | ContainerInsert | ContainerDelete | ContainerUpdate
+                ContainerUpdate => {
+                    // If this was generated from a full dict, emit ContainerUpdateFromEntries using the dict value
+                    if let OpTag::GeneratedContainerUpdate {
+                        new_root, old_root, ..
+                    } = tag
+                    {
+                        if let (Some(new_dict), Some(old_dict)) =
+                            (edb.full_dict(new_root), edb.full_dict(old_root))
+                        {
+                            if let Statement::ContainerUpdate(_r, _r2, k, v) = head.clone() {
+                                // Expect k and v to be literals here
+                                if let (ValueRef::Literal(kv), ValueRef::Literal(vv)) = (k, v) {
+                                    return Ok(Some(Operation(
+                                        OperationType::Native(
+                                            NativeOperation::ContainerUpdateFromEntries,
+                                        ),
+                                        vec![
+                                            OperationArg::from(Value::from(new_dict)),
+                                            OperationArg::from(Value::from(old_dict)),
+                                            OperationArg::from(kv),
+                                            OperationArg::from(vv),
+                                        ],
+                                        OperationAux::None,
+                                    )));
+                                }
+                            }
+                        } else {
+                            return Err("missing dictionary for GeneratedContainerUpdate; cannot replay"
+                                .to_string());
+                        }
+                    }
+                    Ok(Some(Operation::copy(head.clone())))
+                }
+                // TODO: Other container predicates should be supported
+                None | False | ContainerInsert | ContainerDelete
                 | DictContains | DictNotContains | SetContains | SetNotContains | ArrayContains
                 | GtEq | Gt | DictInsert | DictUpdate | DictDelete | SetInsert | SetDelete
                 | ArrayUpdate => Ok(std::option::Option::None),
@@ -694,6 +727,16 @@ fn order_custom_premises(
                     (
                         Predicate::Native(NP::ContainerInsert),
                         Stmt::ContainerInsert(a0, a1, a2, a3),
+                    ) => {
+                        let args = tmpl.args();
+                        arg_matches(&args[0], &a0)
+                            && arg_matches(&args[1], &a1)
+                            && arg_matches(&args[2], &a2)
+                            && arg_matches(&args[3], &a3)
+                    }
+                    (
+                        Predicate::Native(NP::ContainerUpdate),
+                        Stmt::ContainerUpdate(a0, a1, a2, a3),
                     ) => {
                         let args = tmpl.args();
                         arg_matches(&args[0], &a0)

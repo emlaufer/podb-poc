@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use lib::membership::{MembershipProver, MembershipState};
+use lib::api::{AcceptInviteRequest, AcceptInviteResponse, StateCommitmentResponse};
+use lib::membership::{MembershipProver, MembershipState, MembershipVerifier};
 use pod2::backends::plonky2::signer::Signer;
 use pod2::frontend::MainPod;
 use pod2::middleware::{PublicKey, SecretKey};
@@ -74,31 +75,11 @@ enum Commands {
     Status,
 }
 
-#[derive(Serialize)]
-struct AcceptInviteRequest {
-    accept_invite_pod: MainPod,
-    new_member_public_key: PublicKey,
-}
-
-#[derive(Deserialize)]
-struct AcceptInviteResponse {
-    update_proof: MainPod,
-    new_member_count: usize,
-    success: bool,
-}
-
-#[derive(Deserialize)]
-struct MembershipStateResponse {
-    admins: Vec<PublicKey>,
-    members: Vec<PublicKey>,
-    admin_count: usize,
-    member_count: usize,
-}
-
 struct PodobClient {
     client: Client,
     base_url: String,
     prover: MembershipProver,
+    verifier: MembershipVerifier,
 }
 
 impl PodobClient {
@@ -107,6 +88,7 @@ impl PodobClient {
             client: Client::new(),
             base_url,
             prover: MembershipProver::new(),
+            verifier: MembershipVerifier::new(),
         }
     }
 
@@ -115,6 +97,13 @@ impl PodobClient {
         accept_pod: MainPod,
         member_public_key: PublicKey,
     ) -> Result<AcceptInviteResponse> {
+        // Get old state before submitting
+        println!("Getting current membership state for verification...");
+        let old_state = self
+            .get_membership_state()
+            .await
+            .context("Failed to get current membership state")?;
+
         let url = format!("{}/membership/accept-invite", self.base_url);
         let request = AcceptInviteRequest {
             accept_invite_pod: accept_pod,
@@ -142,6 +131,54 @@ impl PodobClient {
             .await
             .context("Failed to parse server response")?;
 
+        // Verify the state transition proof returned by the server using commitments
+        if result.success {
+            println!("Verifying state transition using commitments...");
+
+            // Verify the old state commitment matches what we expected
+            let expected_old_commitment = old_state.commitment();
+            if result.old_state_commitment == expected_old_commitment {
+                println!("✓ Old state commitment matches expected value");
+            } else {
+                println!("⚠ Warning: Old state commitment mismatch!");
+                println!("  Expected: {:?}", expected_old_commitment);
+                println!("  Server returned: {:?}", result.old_state_commitment);
+            }
+
+            // Create expected new state and verify its commitment
+            let mut expected_new_state = old_state.clone();
+            expected_new_state.add_member(member_public_key);
+            let expected_new_commitment = expected_new_state.commitment();
+
+            if result.new_state_commitment == expected_new_commitment {
+                println!("✓ New state commitment matches expected value");
+            } else {
+                println!("⚠ Warning: New state commitment mismatch!");
+                println!("  Expected: {:?}", expected_new_commitment);
+                println!("  Server returned: {:?}", result.new_state_commitment);
+            }
+
+            // Verify the update proof with expected states
+            match self.verifier.verify_update_state(
+                &result.update_proof,
+                &result.old_state_commitment,
+                &result.new_state_commitment,
+            ) {
+                Ok(true) => println!("✓ Server's state transition proof verified successfully!"),
+                Ok(false) => {
+                    println!("⚠ Warning: Server's state transition proof verification failed!");
+                }
+                Err(e) => {
+                    println!(
+                        "⚠ Warning: Failed to verify server's state transition proof: {:?}",
+                        e
+                    );
+                }
+            }
+
+            println!("✓ State transition verification complete");
+        }
+
         Ok(result)
     }
 
@@ -163,22 +200,15 @@ impl PodobClient {
             anyhow::bail!("Server returned error: {}", error_text);
         }
 
-        let state_response: MembershipStateResponse = response
+        let membership_state: MembershipState = response
             .json()
             .await
             .context("Failed to parse server response")?;
 
-        let mut membership_state = MembershipState::default();
-        for admin in state_response.admins {
-            membership_state.add_admin(admin);
-        }
-        for member in state_response.members {
-            membership_state.add_member(member);
-        }
-
         println!(
             "Fetched membership state: {} admins, {} members",
-            state_response.admin_count, state_response.member_count
+            membership_state.admins.len(),
+            membership_state.members.len()
         );
 
         Ok(membership_state)

@@ -1,4 +1,5 @@
 use hex::ToHex;
+use pod2::backends::plonky2::basetypes::DEFAULT_VD_SET;
 use pod2::{
     backends::plonky2::{mock::mainpod::MockProver, signer::Signer},
     examples::MOCK_VD_SET,
@@ -75,6 +76,15 @@ impl MembershipState {
             self.admins.insert(admin);
         }
     }
+
+    /// Get a cryptographic commitment to this state
+    pub fn commitment(&self) -> pod2::middleware::Hash {
+        let typed_value: TypedValue = self.clone().into();
+        match typed_value {
+            TypedValue::Dictionary(dict) => dict.commitment(),
+            _ => panic!("MembershipState should convert to Dictionary"),
+        }
+    }
 }
 
 /// Evidence required for updating membership state
@@ -125,12 +135,23 @@ impl MembershipProver {
     }
 
     /// Create a membership batch containing all predicates
+    fn create_query_batch(&self) -> Result<Arc<CustomPredicateBatch>, MembershipError> {
+        // For now, create a simple batch using eth_dos_batch as template
+        // In a real implementation, you'd convert the PODLang predicates to the solver's batch format
+        let query_batch_content = query_predicates();
+        let query_batch = parse(&query_batch_content, &self.params, &[])
+            .unwrap()
+            .custom_batch;
+        Ok(query_batch)
+    }
+
+    /// Create a membership batch containing all predicates
     fn create_membership_batch(&self) -> Result<Arc<CustomPredicateBatch>, MembershipError> {
         // For now, create a simple batch using eth_dos_batch as template
         // In a real implementation, you'd convert the PODLang predicates to the solver's batch format
-        let batch_content = membership_predicates();
-
-        let batch = parse(&batch_content, &self.params, &[])
+        let query_batch = self.create_query_batch().unwrap();
+        let batch_content = membership_predicates(query_batch.clone());
+        let batch = parse(&batch_content, &self.params, &[query_batch])
             .unwrap()
             //.map_err(|e| {
             //    MembershipError::ParseError(
@@ -153,11 +174,16 @@ impl MembershipProver {
         debug!("Pod request: {}", request);
 
         let batch = self.create_membership_batch()?;
+        let query_batch = self.create_query_batch()?;
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
 
-        let processed = parse(&request, &self.params, std::slice::from_ref(&batch))
-            .map_err(|e| MembershipError::ParseError(e.to_string()))?;
+        let processed = parse(
+            &request,
+            &self.params,
+            &[batch.clone(), query_batch.clone()],
+        )
+        .map_err(|e| MembershipError::ParseError(e.to_string()))?;
 
         let edb = edb_builder();
 
@@ -171,6 +197,7 @@ impl MembershipProver {
         );
 
         custom::register_rules_from_batch(&mut engine.rules, &batch);
+        custom::register_rules_from_batch(&mut engine.rules, &query_batch);
         engine.load_processed(&processed);
         engine
             .run()
@@ -239,21 +266,24 @@ impl MembershipProver {
             "#,
             batch.id().encode_hex::<String>(),
             state_value,
-            Value::new(TypedValue::Dictionary(invite_signed.dict.clone()))
+            Value::new(invite_pk.into())
         );
+        println!("REAL REQUEST: {}", request);
 
         let state_dict = match Into::<TypedValue>::into(state.clone()) {
             TypedValue::Dictionary(dict) => dict.clone(),
             _ => panic!(),
         };
 
-        self.prove_with_request_and_edb(request, move || {
-            edb::ImmutableEdbBuilder::new()
-                .add_keypair(admin_signer.public_key(), admin_signer.0.clone())
-                .add_full_dict(state_dict)
-                .add_signed_dict(invite_signed)
-                .build()
-        })
+        Ok(self
+            .prove_with_request_and_edb(request, move || {
+                edb::ImmutableEdbBuilder::new()
+                    .add_keypair(admin_signer.public_key(), admin_signer.0.clone())
+                    .add_full_dict(state_dict)
+                    .add_signed_dict(invite_signed)
+                    .build()
+            })
+            .unwrap())
     }
 
     pub fn prove_accept_invite(
@@ -273,13 +303,15 @@ impl MembershipProver {
             use _, _, accept_invite, _ from 0x{}
             
             REQUEST(
-                accept_invite({}, PublicKey({}))
+                accept_invite({}, {})
             )
             "#,
             batch.id().encode_hex::<String>(),
             state_value,
-            invite_pk
+            Value::new(invite_pk.into())
         );
+        println!("PRIOR POD: {}", invite_pod);
+        println!("REQUEST: {}", request);
 
         self.prove_with_request_and_edb(request, move || {
             edb::ImmutableEdbBuilder::new()
@@ -309,24 +341,18 @@ impl MembershipProver {
             TypedValue::Dictionary(dict) => dict.clone(),
             _ => panic!(),
         };
-        let mut test = old_state_dict.clone();
-        test.insert(&Key::from("test"), &Value::new(TypedValue::Int(0)))
-            .unwrap();
-        let test_new = Value::new(TypedValue::Dictionary(test));
 
         let request = format!(
             r#"
             use _, _, _, update_state from 0x{}
             
             REQUEST(
-                update_state({}, {}, {}, {})
+                update_state({}, {})
             )
             "#,
             batch.id().encode_hex::<String>(),
             old_state_value,
             new_state_value,
-            old_state_dict.get(&Key::from("members")).unwrap(),
-            new_state_dict.get(&Key::from("members")).unwrap(),
         );
         println!("REQUEST IS: {}", request);
         self.prove_with_request_and_edb(request, move || {

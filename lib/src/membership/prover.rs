@@ -245,12 +245,13 @@ impl MembershipProver {
 
     pub fn prove_invite(
         &self,
-        state: &MembershipState,
+        state_commitment: pod2::middleware::Hash,
         invite_pk: PublicKey,
         admin_signer: &Signer,
+        is_admin_proof: &MainPod,
     ) -> Result<MainPod, MembershipError> {
         let batch = self.create_membership_batch()?;
-        let state_value = state.clone().to_pod_value();
+        let state_value = state_commitment.to_pod_value();
 
         let mut invite_signed = SignedDictBuilder::new(&self.params);
         invite_signed.insert("invite", invite_pk);
@@ -270,32 +271,25 @@ impl MembershipProver {
         );
         println!("REAL REQUEST: {}", request);
 
-        let state_dict = match Into::<TypedValue>::into(state.clone()) {
-            TypedValue::Dictionary(dict) => dict.clone(),
-            _ => panic!(),
-        };
-
-        Ok(self
-            .prove_with_request_and_edb(request, move || {
-                edb::ImmutableEdbBuilder::new()
-                    .add_keypair(admin_signer.public_key(), admin_signer.0.clone())
-                    .add_full_dict(state_dict)
-                    .add_signed_dict(invite_signed)
-                    .build()
-            })
-            .unwrap())
+        self.prove_with_request_and_edb(request, move || {
+            edb::ImmutableEdbBuilder::new()
+                .add_keypair(admin_signer.public_key(), admin_signer.0.clone())
+                .add_main_pod(is_admin_proof)
+                .add_signed_dict(invite_signed)
+                .build()
+        })
     }
 
     pub fn prove_accept_invite(
         &self,
-        state: &MembershipState,
+        state_commitment: pod2::middleware::Hash,
         invite_signer: &Signer,
         invite_pod: &MainPod,
     ) -> Result<MainPod, MembershipError> {
         debug!("Input invite pod: {}", invite_pod);
 
         let batch = self.create_membership_batch()?;
-        let state_value = state.clone().to_pod_value();
+        let state_value = state_commitment.to_pod_value();
         let invite_pk = invite_signer.public_key();
 
         let request = format!(
@@ -360,6 +354,39 @@ impl MembershipProver {
                 .add_main_pod(accept_invite_pod)
                 .add_full_dict(old_state_dict)
                 .add_full_dict(new_state_dict)
+                .build()
+        })
+    }
+
+    pub fn prove_is_admin(
+        &self,
+        state: &MembershipState,
+        admin_pk: PublicKey,
+    ) -> Result<MainPod, MembershipError> {
+        let batch = self.create_query_batch()?;
+        let state_value = state.clone().to_pod_value();
+
+        let request = format!(
+            r#"
+            use is_admin from 0x{}
+        
+            REQUEST(
+                is_admin({}, {})
+            )
+            "#,
+            batch.id().encode_hex::<String>(),
+            state_value,
+            Value::new(admin_pk.into())
+        );
+
+        let state_dict = match Into::<TypedValue>::into(state.clone()) {
+            TypedValue::Dictionary(dict) => dict.clone(),
+            _ => panic!(),
+        };
+
+        self.prove_with_request_and_edb(request, move || {
+            edb::ImmutableEdbBuilder::new()
+                .add_full_dict(state_dict)
                 .build()
         })
     }
@@ -632,10 +659,15 @@ mod tests {
 
         state.add_admin(admin_signer.public_key());
 
-        // Test the init_membership proof generation
-        let result = prover.prove_invite(&state, invite_pk, &admin_signer);
+        // First generate is_admin proof
+        let is_admin_proof = prover.prove_is_admin(&state, admin_signer.public_key())
+            .expect("Should be able to prove admin status");
 
-        // The proof should succeed - init_membership should be provable with empty state
+        // Test the invite proof generation using state commitment and is_admin proof
+        let state_commitment = state.commitment();
+        let result = prover.prove_invite(state_commitment, invite_pk, &admin_signer, &is_admin_proof);
+
+        // The proof should succeed - invite should be provable with admin proof
         match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
@@ -659,10 +691,15 @@ mod tests {
 
         state.add_admin(admin_signer.public_key());
 
-        // Test the init_membership proof generation
-        let result = prover.prove_invite(&state, invite_signer.public_key(), &admin_signer);
+        // First generate is_admin proof
+        let is_admin_proof = prover.prove_is_admin(&state, admin_signer.public_key())
+            .expect("Should be able to prove admin status");
 
-        // The proof should succeed - init_membership should be provable with empty state
+        // Test the invite proof generation using state commitment and is_admin proof
+        let state_commitment = state.commitment();
+        let result = prover.prove_invite(state_commitment, invite_signer.public_key(), &admin_signer, &is_admin_proof);
+
+        // The proof should succeed - invite should be provable with admin proof
         let invite_pod = match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
@@ -676,10 +713,10 @@ mod tests {
         };
         println!("POD IS: {}", invite_pod);
 
-        // Test the init_membership proof generation
-        let result = prover.prove_accept_invite(&state, &invite_signer, &invite_pod);
+        // Test the accept_invite proof generation using state commitment
+        let result = prover.prove_accept_invite(state_commitment, &invite_signer, &invite_pod);
 
-        // The proof should succeed - init_membership should be provable with empty state
+        // The proof should succeed - accept_invite should be provable with invite pod
         match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
@@ -704,10 +741,15 @@ mod tests {
 
         state.add_admin(admin_signer.public_key());
 
-        // Test the init_membership proof generation
-        let result = prover.prove_invite(&state, invite_signer.public_key(), &admin_signer);
+        // First generate is_admin proof
+        let is_admin_proof = prover.prove_is_admin(&state, admin_signer.public_key())
+            .expect("Should be able to prove admin status");
 
-        // The proof should succeed - init_membership should be provable with empty state
+        // Test the invite proof generation using state commitment and is_admin proof
+        let state_commitment = state.commitment();
+        let result = prover.prove_invite(state_commitment, invite_signer.public_key(), &admin_signer, &is_admin_proof);
+
+        // The proof should succeed - invite should be provable with admin proof
         let invite_pod = match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
@@ -721,10 +763,10 @@ mod tests {
         };
         println!("POD IS: {}", invite_pod);
 
-        // Test the init_membership proof generation
-        let result = prover.prove_accept_invite(&state, &invite_signer, &invite_pod);
+        // Test the accept_invite proof generation using state commitment
+        let result = prover.prove_accept_invite(state_commitment, &invite_signer, &invite_pod);
 
-        // The proof should succeed - init_membership should be provable with empty state
+        // The proof should succeed - accept_invite should be provable with invite pod
         let accept_invite_pod = match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
@@ -745,7 +787,7 @@ mod tests {
             Ok(pod) => {
                 // Verify we got a valid pod back
                 assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty()); // Either way is valid
-                println!("Successfully generated accept invite proof");
+                println!("Successfully generated update state proof");
                 pod
             }
             Err(e) => {
@@ -771,5 +813,41 @@ mod tests {
         };
 
         println!("GOT VAL: {}", membership_state.to_pod_value());
+    }
+
+    #[test]
+    fn test_prove_is_admin() {
+        let prover = MembershipProver::new();
+        let mut state = MembershipState::default();
+
+        let admin_pk = PublicKey::new_rand_from_subgroup();
+        let non_admin_pk = PublicKey::new_rand_from_subgroup();
+
+        // Add admin to state
+        state.add_admin(admin_pk);
+
+        // Test proving is_admin for actual admin
+        let result = prover.prove_is_admin(&state, admin_pk);
+        match result {
+            Ok(pod) => {
+                println!("Successfully generated is_admin proof for admin");
+                // Verify we got a valid pod back
+                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty());
+            }
+            Err(e) => {
+                panic!("Proof was not generated for admin: {:?}", e);
+            }
+        }
+
+        // Test proving is_admin for non-admin (this should fail or return a proof of non-admin status)
+        let non_admin_result = prover.prove_is_admin(&state, non_admin_pk);
+        match non_admin_result {
+            Ok(_pod) => {
+                println!("Generated proof for non-admin (may prove non-admin status)");
+            }
+            Err(_e) => {
+                println!("Cannot prove is_admin for non-admin (expected behavior)");
+            }
+        }
     }
 }

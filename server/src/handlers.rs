@@ -1,5 +1,5 @@
 use axum::{extract::State, response::Json};
-use lib::api::{AcceptInviteRequest, AcceptInviteResponse, StateCommitmentResponse};
+use lib::api::{AcceptInviteRequest, AcceptInviteResponse, IsAdminProofRequest, IsAdminProofResponse, StateCommitmentResponse};
 use lib::membership::{
     MembershipError, MembershipProver, MembershipState, MembershipVerifier, VerificationError,
 };
@@ -84,6 +84,13 @@ impl MembershipService {
         Ok((update_proof, old_state_commitment, new_state_commitment))
     }
 
+    pub fn prove_is_admin(
+        &self,
+        public_key: PublicKey,
+    ) -> Result<MainPod, MembershipError> {
+        self.prover.prove_is_admin(&self.current_state, public_key)
+    }
+
     pub fn current_state(&self) -> &MembershipState {
         &self.current_state
     }
@@ -142,6 +149,29 @@ pub async fn accept_invite(
 }
 
 #[instrument]
+pub async fn prove_is_admin(
+    State(state): State<SharedState>,
+    Json(request): Json<IsAdminProofRequest>,
+) -> Result<Json<IsAdminProofResponse>, Json<MembershipServerError>> {
+    info!("Is admin proof request received");
+
+    let service = state.read().await;
+    match service.prove_is_admin(request.public_key) {
+        Ok(is_admin_proof) => {
+            info!("Successfully generated is_admin proof");
+            Ok(Json(IsAdminProofResponse {
+                is_admin_proof,
+                success: true,
+            }))
+        }
+        Err(err) => {
+            error!("Failed to generate is_admin proof: {:?}", err);
+            Err(Json(MembershipServerError::from(err)))
+        }
+    }
+}
+
+#[instrument]
 pub async fn get_membership_state_commitment(
     State(state): State<SharedState>,
 ) -> Json<StateCommitmentResponse> {
@@ -158,25 +188,6 @@ pub async fn get_membership_state_commitment(
     info!(
         "Returning state commitment with {} members",
         response.member_count
-    );
-
-    Json(response)
-}
-
-// Keep the old endpoint for backward compatibility during development
-#[instrument]
-pub async fn get_membership_state(State(state): State<SharedState>) -> Json<MembershipState> {
-    info!("Membership state request received (full state - use commitment endpoint instead)");
-
-    let service = state.read().await;
-    let current_state = service.current_state();
-
-    let response = current_state.clone();
-
-    info!(
-        "Returning membership state: {} admins, {} members",
-        response.admins.len(),
-        response.members.len()
     );
 
     Json(response)

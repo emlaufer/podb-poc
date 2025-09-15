@@ -25,3 +25,16 @@ pub struct StateCommitmentResponse {
     pub state_commitment: Hash,
     pub member_count: usize,
 }
+
+/// Request to generate an is_admin proof
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IsAdminProofRequest {
+    pub public_key: PublicKey,
+}
+
+/// Response containing is_admin proof
+#[derive(Debug, Deserialize, Serialize)]
+pub struct IsAdminProofResponse {
+    pub is_admin_proof: MainPod,
+    pub success: bool,
+}

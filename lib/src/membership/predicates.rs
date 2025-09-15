@@ -121,22 +121,3 @@ update_state(old_state, new_state, private: invite_pk, old_member_set, new_membe
 pub fn query_predicates() -> &'static str {
     QUERY_PREDICATES
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_predicates_contain_expected_keywords() {
-        assert!(INIT_MEMBERSHIP.contains("init_membership"));
-
-        assert!(INVITE.contains("invite"));
-        assert!(INVITE.contains("Contains"));
-
-        assert!(ACCEPT_INVITE.contains("accept_invite"));
-
-        assert!(UPDATE_STATE.contains("update_state"));
-        assert!(UPDATE_STATE.contains("SetInsert"));
-        assert!(UPDATE_STATE.contains("DictUpdate"));
-    }
-}

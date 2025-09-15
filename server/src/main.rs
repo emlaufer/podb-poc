@@ -57,8 +57,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(handlers::hello))
-        .route("/membership/state", get(handlers::get_membership_state))
+        .route("/membership/state-commitment", get(handlers::get_membership_state_commitment))
         .route("/membership/accept-invite", post(handlers::accept_invite))
+        .route("/membership/prove-is-admin", post(handlers::prove_is_admin))
         .with_state(shared_state)
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 

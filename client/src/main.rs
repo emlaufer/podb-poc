@@ -4,7 +4,7 @@ use lib::api::{AcceptInviteRequest, AcceptInviteResponse, StateCommitmentRespons
 use lib::membership::{MembershipProver, MembershipState, MembershipVerifier};
 use pod2::backends::plonky2::signer::Signer;
 use pod2::frontend::MainPod;
-use pod2::middleware::{PublicKey, SecretKey};
+use pod2::middleware::{PublicKey, SecretKey, Signer as SignerTrait};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -97,13 +97,6 @@ impl PodobClient {
         accept_pod: MainPod,
         member_public_key: PublicKey,
     ) -> Result<AcceptInviteResponse> {
-        // Get old state before submitting
-        println!("Getting current membership state for verification...");
-        let old_state = self
-            .get_membership_state()
-            .await
-            .context("Failed to get current membership state")?;
-
         let url = format!("{}/membership/accept-invite", self.base_url);
         let request = AcceptInviteRequest {
             accept_invite_pod: accept_pod,
@@ -131,34 +124,11 @@ impl PodobClient {
             .await
             .context("Failed to parse server response")?;
 
-        // Verify the state transition proof returned by the server using commitments
+        // Verify the state transition proof returned by the server
         if result.success {
-            println!("Verifying state transition using commitments...");
+            println!("Verifying state transition proof...");
 
-            // Verify the old state commitment matches what we expected
-            let expected_old_commitment = old_state.commitment();
-            if result.old_state_commitment == expected_old_commitment {
-                println!("✓ Old state commitment matches expected value");
-            } else {
-                println!("⚠ Warning: Old state commitment mismatch!");
-                println!("  Expected: {:?}", expected_old_commitment);
-                println!("  Server returned: {:?}", result.old_state_commitment);
-            }
-
-            // Create expected new state and verify its commitment
-            let mut expected_new_state = old_state.clone();
-            expected_new_state.add_member(member_public_key);
-            let expected_new_commitment = expected_new_state.commitment();
-
-            if result.new_state_commitment == expected_new_commitment {
-                println!("✓ New state commitment matches expected value");
-            } else {
-                println!("⚠ Warning: New state commitment mismatch!");
-                println!("  Expected: {:?}", expected_new_commitment);
-                println!("  Server returned: {:?}", result.new_state_commitment);
-            }
-
-            // Verify the update proof with expected states
+            // Verify the update proof with the commitments provided by server
             match self.verifier.verify_update_state(
                 &result.update_proof,
                 &result.old_state_commitment,
@@ -182,37 +152,6 @@ impl PodobClient {
         Ok(result)
     }
 
-    async fn get_membership_state(&self) -> Result<MembershipState> {
-        let url = format!("{}/membership/state", self.base_url);
-
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to connect to server")?;
-
-        if !response.status().is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            anyhow::bail!("Server returned error: {}", error_text);
-        }
-
-        let membership_state: MembershipState = response
-            .json()
-            .await
-            .context("Failed to parse server response")?;
-
-        println!(
-            "Fetched membership state: {} admins, {} members",
-            membership_state.admins.len(),
-            membership_state.members.len()
-        );
-
-        Ok(membership_state)
-    }
 
     async fn check_status(&self) -> Result<()> {
         let url = format!("{}/", self.base_url);
@@ -240,6 +179,69 @@ impl PodobClient {
         }
 
         Ok(())
+    }
+
+    async fn get_is_admin_proof(&self, public_key: PublicKey) -> Result<MainPod> {
+        let url = format!("{}/membership/prove-is-admin", self.base_url);
+        let request = lib::api::IsAdminProofRequest { public_key };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to connect to server")?;
+
+        if !response.status().is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            anyhow::bail!("Server returned error: {}", error_text);
+        }
+
+        let result: lib::api::IsAdminProofResponse = response
+            .json()
+            .await
+            .context("Failed to parse server response")?;
+
+        if !result.success {
+            anyhow::bail!("Server failed to generate is_admin proof");
+        }
+
+        Ok(result.is_admin_proof)
+    }
+
+    async fn get_state_commitment(&self) -> Result<pod2::middleware::Hash> {
+        let url = format!("{}/membership/state-commitment", self.base_url);
+
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to connect to server")?;
+
+        if !response.status().is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            anyhow::bail!("Server returned error: {}", error_text);
+        }
+
+        let result: lib::api::StateCommitmentResponse = response
+            .json()
+            .await
+            .context("Failed to parse server response")?;
+
+        println!(
+            "Fetched state commitment with {} members",
+            result.member_count
+        );
+
+        Ok(result.state_commitment)
     }
 
     fn generate_keypair(&self, name: &str) -> Result<()> {
@@ -286,18 +288,25 @@ impl PodobClient {
         let invite_member_pk: PublicKey = serde_json::from_str(&invite_member_json)
             .context("Failed to deserialize invite member public key from JSON")?;
 
-        // Fetch current membership state from server
-        println!("Fetching current membership state from server...");
-        let state = self
-            .get_membership_state()
+        // Get is_admin proof from server
+        println!("Getting is_admin proof from server...");
+        let is_admin_proof = self
+            .get_is_admin_proof(admin_signer.public_key())
             .await
-            .context("Failed to get current membership state from server")?;
+            .context("Failed to get is_admin proof from server")?;
 
-        // Generate invite pod
+        // Get state commitment from server
+        println!("Getting state commitment from server...");
+        let state_commitment = self
+            .get_state_commitment()
+            .await
+            .context("Failed to get state commitment from server")?;
+
+        // Generate invite pod using state commitment and is_admin proof
         println!("Generating invite pod...");
         let invite_pod = self
             .prover
-            .prove_invite(&state, invite_member_pk, &admin_signer)
+            .prove_invite(state_commitment, invite_member_pk, &admin_signer, &is_admin_proof)
             .context("Failed to generate invite pod")?;
 
         // Serialize pod to file
@@ -331,18 +340,18 @@ impl PodobClient {
             .context("Failed to deserialize invitee private key from JSON")?;
         let invitee_signer = Signer(invitee_secret);
 
-        // Fetch current membership state from server
-        println!("Fetching current membership state from server...");
-        let state = self
-            .get_membership_state()
+        // Get state commitment from server
+        println!("Getting state commitment from server...");
+        let state_commitment = self
+            .get_state_commitment()
             .await
-            .context("Failed to get current membership state from server")?;
+            .context("Failed to get state commitment from server")?;
 
-        // Generate accept invite pod
+        // Generate accept invite pod using state commitment
         println!("Generating accept invite pod...");
         let accept_pod = self
             .prover
-            .prove_accept_invite(&state, &invitee_signer, &invite_pod)
+            .prove_accept_invite(state_commitment, &invitee_signer, &invite_pod)
             .context("Failed to generate accept invite pod")?;
 
         // Serialize pod to file

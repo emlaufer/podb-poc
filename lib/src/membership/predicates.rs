@@ -97,6 +97,8 @@ init_membership(state) = AND(
 invite(state, invite_pk, private: admin_sk, admin_pk) = AND(
     is_admin(?state, ?admin_pk)
     PublicKeyOf(?admin_pk, ?admin_sk)
+    // annoying - need this to bind invite_pk arg to correct value
+    Equal(?invite_pk, ?invite_pk) 
 )
 
 accept_invite(state, invite_pk, private: admin_pk, invite_sk) = AND(

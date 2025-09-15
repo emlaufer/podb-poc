@@ -197,7 +197,7 @@ where
             let public = public_selector(head_stmt);
             // Insert operation as private to ensure an earlier source for public copies,
             // then mark as public if selected.
-            println!("OP IS: {:?}", op);
+            println!("OP IS: {}", op);
             let st = builder.priv_op(op).map_err(|e| e.to_string())?;
             inserted_ops += 1;
             if public {
@@ -501,17 +501,20 @@ fn map_to_operation(
                                 }
                             }
                         } else {
-                            return Err("missing dictionary for GeneratedContainerUpdate; cannot replay"
-                                .to_string());
+                            return Err(
+                                "missing dictionary for GeneratedContainerUpdate; cannot replay"
+                                    .to_string(),
+                            );
                         }
                     }
                     Ok(Some(Operation::copy(head.clone())))
                 }
                 // TODO: Other container predicates should be supported
-                None | False | ContainerInsert | ContainerDelete
-                | DictContains | DictNotContains | SetContains | SetNotContains | ArrayContains
-                | GtEq | Gt | DictInsert | DictUpdate | DictDelete | SetInsert | SetDelete
-                | ArrayUpdate => Ok(std::option::Option::None),
+                None | False | ContainerInsert | ContainerDelete | DictContains
+                | DictNotContains | SetContains | SetNotContains | ArrayContains | GtEq | Gt
+                | DictInsert | DictUpdate | DictDelete | SetInsert | SetDelete | ArrayUpdate => {
+                    Ok(std::option::Option::None)
+                }
             }
         }
         _ => Ok(None),

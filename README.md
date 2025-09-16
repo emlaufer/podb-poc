@@ -26,20 +26,20 @@ cargo run --bin client -- generate-keypair --name member
 
 # Generate an invite (admin invites member)
 cargo run --bin client -- generate-invite \
-  --admin-key admin_private.pem \
-  --invite-member member_public.pem \
+  --admin-key admin.private \
+  --invite-member member.public \
   --output invite.pod
 
 # Accept the invite (member accepts)
 cargo run --bin client -- accept-invite \
   --invite-pod invite.pod \
-  --invitee-key member_private.pem \
+  --invitee-key member.private \
   --output accept.pod
 
 # Submit acceptance to server
 cargo run --bin client -- submit-accept \
   --accept-pod accept.pod \
-  --member-public-key member_public.pem
+  --member-public-key member.public
 
 # Check server status
 cargo run --bin client -- status

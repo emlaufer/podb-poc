@@ -4,7 +4,6 @@ use pod2::{
     lang::parse,
     middleware::{CustomPredicateBatch, Hash, Params, PublicKey, TypedValue, Value},
 };
-use pod2_solver::op::OpRegistry;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -38,41 +37,17 @@ impl std::fmt::Display for VerificationError {
 }
 
 /// Main verifier for membership predicates
+#[derive(Debug)]
 pub struct MembershipVerifier {
     params: Params,
-    registry: OpRegistry,
-}
-
-impl std::fmt::Debug for MembershipVerifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MembershipVerifier")
-            .field("params", &self.params)
-            .field("registry", &"OpRegistry")
-            .finish()
-    }
 }
 
 impl MembershipVerifier {
     /// Create a new membership verifier
     pub fn new() -> Self {
-        let mut registry = OpRegistry::default();
-        pod2_solver::handlers::register_publickeyof_handlers(&mut registry);
         Self {
-            params: Params {
-                max_input_pods_public_statements: 8,
-                max_statements: 24,
-                max_public_statements: 8,
-                ..Default::default()
-            },
-            registry,
+            params: Params::default(),
         }
-    }
-
-    /// Create a verifier with custom parameters
-    pub fn with_params(params: Params) -> Self {
-        let mut registry = OpRegistry::default();
-        pod2_solver::handlers::register_publickeyof_handlers(&mut registry);
-        Self { params, registry }
     }
 
     /// Create a membership batch containing all predicates

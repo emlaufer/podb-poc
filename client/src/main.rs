@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use lib::api::{AcceptInviteRequest, AcceptInviteResponse, StateCommitmentResponse};
-use lib::membership::{MembershipProver, MembershipState, MembershipVerifier};
+use lib::api::{AcceptInviteRequest, AcceptInviteResponse};
+use lib::membership::{MembershipProver, MembershipVerifier};
 use pod2::backends::plonky2::signer::Signer;
 use pod2::frontend::MainPod;
 use pod2::middleware::{PublicKey, SecretKey, Signer as SignerTrait};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
@@ -151,7 +150,6 @@ impl PodobClient {
 
         Ok(result)
     }
-
 
     async fn check_status(&self) -> Result<()> {
         let url = format!("{}/", self.base_url);
@@ -306,7 +304,12 @@ impl PodobClient {
         println!("Generating invite pod...");
         let invite_pod = self
             .prover
-            .prove_invite(state_commitment, invite_member_pk, &admin_signer, &is_admin_proof)
+            .prove_invite(
+                state_commitment,
+                invite_member_pk,
+                &admin_signer,
+                &is_admin_proof,
+            )
             .context("Failed to generate invite pod")?;
 
         // Serialize pod to file

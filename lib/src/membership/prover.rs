@@ -1,12 +1,11 @@
 use hex::ToHex;
-use pod2::backends::plonky2::basetypes::DEFAULT_VD_SET;
 use pod2::{
     backends::plonky2::{mock::mainpod::MockProver, signer::Signer},
     examples::MOCK_VD_SET,
-    frontend::{MainPod, SignedDict, SignedDictBuilder},
+    frontend::{MainPod, SignedDictBuilder},
     lang::parse,
     middleware::{
-        CustomPredicateBatch, Key, Params, PublicKey, SecretKey, Signer as SignerTrait, TypedValue,
+        CustomPredicateBatch, Params, PublicKey, SecretKey, Signer as SignerTrait, TypedValue,
         Value, containers::Dictionary,
     },
 };
@@ -660,12 +659,14 @@ mod tests {
         state.add_admin(admin_signer.public_key());
 
         // First generate is_admin proof
-        let is_admin_proof = prover.prove_is_admin(&state, admin_signer.public_key())
+        let is_admin_proof = prover
+            .prove_is_admin(&state, admin_signer.public_key())
             .expect("Should be able to prove admin status");
 
         // Test the invite proof generation using state commitment and is_admin proof
         let state_commitment = state.commitment();
-        let result = prover.prove_invite(state_commitment, invite_pk, &admin_signer, &is_admin_proof);
+        let result =
+            prover.prove_invite(state_commitment, invite_pk, &admin_signer, &is_admin_proof);
 
         // The proof should succeed - invite should be provable with admin proof
         match result {
@@ -692,12 +693,18 @@ mod tests {
         state.add_admin(admin_signer.public_key());
 
         // First generate is_admin proof
-        let is_admin_proof = prover.prove_is_admin(&state, admin_signer.public_key())
+        let is_admin_proof = prover
+            .prove_is_admin(&state, admin_signer.public_key())
             .expect("Should be able to prove admin status");
 
         // Test the invite proof generation using state commitment and is_admin proof
         let state_commitment = state.commitment();
-        let result = prover.prove_invite(state_commitment, invite_signer.public_key(), &admin_signer, &is_admin_proof);
+        let result = prover.prove_invite(
+            state_commitment,
+            invite_signer.public_key(),
+            &admin_signer,
+            &is_admin_proof,
+        );
 
         // The proof should succeed - invite should be provable with admin proof
         let invite_pod = match result {
@@ -742,12 +749,18 @@ mod tests {
         state.add_admin(admin_signer.public_key());
 
         // First generate is_admin proof
-        let is_admin_proof = prover.prove_is_admin(&state, admin_signer.public_key())
+        let is_admin_proof = prover
+            .prove_is_admin(&state, admin_signer.public_key())
             .expect("Should be able to prove admin status");
 
         // Test the invite proof generation using state commitment and is_admin proof
         let state_commitment = state.commitment();
-        let result = prover.prove_invite(state_commitment, invite_signer.public_key(), &admin_signer, &is_admin_proof);
+        let result = prover.prove_invite(
+            state_commitment,
+            invite_signer.public_key(),
+            &admin_signer,
+            &is_admin_proof,
+        );
 
         // The proof should succeed - invite should be provable with admin proof
         let invite_pod = match result {
@@ -798,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_pod_serialization() {
-        use pod2::middleware::{Key, TypedValue, Value};
+        use pod2::middleware::{Key, Value};
         use std::collections::HashMap;
 
         let mut values = HashMap::new();

@@ -91,7 +91,7 @@ impl ServerConfig {
             // The format should be something like "PublicKey(0x1234...)" or just "0x1234..."
             let key = if admin_str.starts_with("PublicKey(") && admin_str.ends_with(')') {
                 // Extract the content between PublicKey( and )
-                let hex_part = &admin_str[10..admin_str.len()-1];
+                let hex_part = &admin_str[10..admin_str.len() - 1];
                 parse_public_key_from_hex(hex_part)?
             } else {
                 // Assume it's just the hex string
@@ -126,9 +126,10 @@ fn parse_public_key_from_hex(key_str: &str) -> Result<PublicKey, ConfigError> {
     }
 
     // If both fail, return error
-    Err(ConfigError::KeyParseError(
-        format!("Failed to parse public key from string: {}", key_str)
-    ))
+    Err(ConfigError::KeyParseError(format!(
+        "Failed to parse public key from string: {}",
+        key_str
+    )))
 }
 
 #[cfg(test)]
@@ -164,7 +165,10 @@ initial_admins = [
         assert_eq!(config.server.port, 8080);
         assert_eq!(config.membership.initial_admins.len(), 2);
         assert_eq!(config.membership.initial_admins[0], "0x1234567890abcdef");
-        assert_eq!(config.membership.initial_admins[1], "PublicKey(0xfedcba0987654321)");
+        assert_eq!(
+            config.membership.initial_admins[1],
+            "PublicKey(0xfedcba0987654321)"
+        );
     }
 
     #[test]
@@ -178,7 +182,7 @@ port = 4000
 initial_admins = ["0x123"]
 "#;
 
-        let mut temp_file = NamedTempFile::new().unwrap();
+        let temp_file = NamedTempFile::new().unwrap();
         fs::write(temp_file.path(), config_content).unwrap();
 
         let config = ServerConfig::load_from_file(temp_file.path()).unwrap();
@@ -205,3 +209,4 @@ initial_admins = ["0x123"]
         assert_eq!(config.bind_address(), "127.0.0.1:8080");
     }
 }
+

@@ -1,11 +1,12 @@
 use axum::{extract::State, response::Json};
-use lib::api::{AcceptInviteRequest, AcceptInviteResponse, IsAdminProofRequest, IsAdminProofResponse, StateCommitmentResponse};
-use lib::membership::{
-    MembershipError, MembershipProver, MembershipState, MembershipVerifier, VerificationError,
+use lib::api::{
+    AcceptInviteRequest, AcceptInviteResponse, IsAdminProofRequest, IsAdminProofResponse,
+    StateCommitmentResponse,
 };
+use lib::membership::{MembershipError, MembershipProver, MembershipState, MembershipVerifier};
 use pod2::frontend::MainPod;
 use pod2::middleware::PublicKey;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -84,10 +85,7 @@ impl MembershipService {
         Ok((update_proof, old_state_commitment, new_state_commitment))
     }
 
-    pub fn prove_is_admin(
-        &self,
-        public_key: PublicKey,
-    ) -> Result<MainPod, MembershipError> {
+    pub fn prove_is_admin(&self, public_key: PublicKey) -> Result<MainPod, MembershipError> {
         self.prover.prove_is_admin(&self.current_state, public_key)
     }
 
@@ -102,9 +100,6 @@ pub type SharedState = Arc<RwLock<MembershipService>>;
 pub enum MembershipServerError {
     InvalidPod(String),
     ProofGenerationFailed(String),
-    StateUpdateFailed(String),
-    VerificationFailed(String),
-    InternalError(String),
 }
 
 impl From<MembershipError> for MembershipServerError {

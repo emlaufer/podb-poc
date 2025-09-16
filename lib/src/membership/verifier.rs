@@ -96,6 +96,9 @@ impl MembershipVerifier {
             .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
             .request;
 
+        proof.pod.verify().map_err(|e| {
+            VerificationError::VerificationFailed(format!("Verification error: {:?}", e))
+        })?;
         request.exact_match_pod(&*proof.pod).map_err(|e| {
             VerificationError::VerificationFailed(format!("Exact match error: {:?}", e))
         })?;
@@ -145,6 +148,9 @@ impl MembershipVerifier {
             .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
             .request;
 
+        proof.pod.verify().map_err(|e| {
+            VerificationError::VerificationFailed(format!("Verification error: {:?}", e))
+        })?;
         request.exact_match_pod(&*proof.pod).map_err(|e| {
             VerificationError::VerificationFailed(format!("Exact match error: {:?}", e))
         })?;
@@ -181,6 +187,9 @@ impl MembershipVerifier {
             .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
             .request;
 
+        proof.pod.verify().map_err(|e| {
+            VerificationError::VerificationFailed(format!("Verification error: {:?}", e))
+        })?;
         request.exact_match_pod(&*proof.pod).map_err(|e| {
             VerificationError::VerificationFailed(format!("Exact match error: {:?}", e))
         })?;
@@ -218,6 +227,9 @@ impl MembershipVerifier {
             .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
             .request;
 
+        proof.pod.verify().map_err(|e| {
+            VerificationError::VerificationFailed(format!("Verification error: {:?}", e))
+        })?;
         request.exact_match_pod(&*proof.pod).map_err(|e| {
             VerificationError::VerificationFailed(format!("Exact match error: {:?}", e))
         })?;

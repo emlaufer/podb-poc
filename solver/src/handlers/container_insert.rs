@@ -158,7 +158,7 @@ impl OpHandler for ContainerInsertFromEntriesHandler {
                                 OpTag::GeneratedContainerInsert {
                                     new_root: new_hash,
                                     old_root: old_hash,
-                                    key: Some(key.clone()),
+                                    key: key.clone(),
                                     value: val.clone(),
                                 }
                             }
@@ -346,12 +346,7 @@ fn check_set_insert_for_known_set(
 
     Some(PropagatorResult::Entailed {
         bindings,
-        op_tag: OpTag::GeneratedContainerInsert {
-            new_root: new_set.commitment(),
-            old_root: old_set.commitment(),
-            key: None,
-            value: value.clone(),
-        },
+        op_tag: OpTag::FromLiterals,
     })
 }
 

@@ -4,8 +4,8 @@ use hex::ToHex;
 use pod2::{
     frontend::{MainPod, MainPodBuilder, Operation, OperationArg},
     middleware::{
-        Hash, Key, OperationAux, OperationType, Params, Statement, StatementArg, VDSet, Value,
-        ValueRef,
+        Hash, Key, OperationAux, OperationType, Params, Statement, StatementArg, TypedValue, VDSet,
+        Value, ValueRef,
     },
 };
 
@@ -33,8 +33,6 @@ where
     G: Fn(&MainPodBuilder) -> Result<MainPod, String>,
 {
     let dag = ProofDagWithOps::from_store(answer);
-    println!("CONSTRAINT STORE: {:?}", answer);
-    println!("DAG IS: {:?}", dag);
 
     // Build quick edge lookups
     let mut heads_for_op: BTreeMap<String, String> = BTreeMap::new();
@@ -161,7 +159,6 @@ where
         topo_ops.extend(remaining);
     }
 
-    println!("TOPO OPS: {:?}", topo_ops);
     // Emit operations following topological order
     let mut inserted_ops: usize = 0;
     for op_key in topo_ops.into_iter() {
@@ -197,7 +194,6 @@ where
             let public = public_selector(head_stmt);
             // Insert operation as private to ensure an earlier source for public copies,
             // then mark as public if selected.
-            println!("OP IS: {}", op);
             let st = builder.priv_op(op).map_err(|e| e.to_string())?;
             inserted_ops += 1;
             if public {
@@ -290,7 +286,6 @@ fn map_to_operation(
     edb: &dyn EdbView,
 ) -> Result<Option<Operation>, String> {
     use pod2::middleware::{NativeOperation, Predicate};
-    println!("MAP TO OP? {}", head.predicate());
 
     // Skip emitting private Copy operations; rely on public Copy from input pods or other proofs
     if let OpTag::CopyStatement { .. } = tag {
@@ -357,11 +352,8 @@ fn map_to_operation(
                         Statement::PublicKeyOf(a, b) => (a, b, NativeOperation::PublicKeyOf),
                         _ => unreachable!(),
                     };
-                    println!("HI GOT : {:?} {:?} {:?}", a, b, op);
                     let a0 = op_arg_from_vr(a, premises, edb)?;
-                    println!("HI GOT2 : {}", a0);
                     let a1 = op_arg_from_vr(b, premises, edb)?;
-                    println!("HI GOT3 : {}", a1);
                     Ok(Some(Operation(
                         OperationType::Native(op),
                         vec![a0, a1],
@@ -507,6 +499,36 @@ fn map_to_operation(
                             );
                         }
                     }
+
+                    // TODO: This seems wrong...
+                    if let OpTag::FromLiterals = tag {
+                        let (new_root, old_root, a_key, a_value) = match head.clone() {
+                            Statement::ContainerUpdate(new_root, old_root, a_key, a_value) => {
+                                (new_root, old_root, a_key, a_value)
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        if let (
+                            ValueRef::Literal(new_root_val),
+                            ValueRef::Literal(old_root_val),
+                            ValueRef::Literal(key),
+                            ValueRef::Literal(value),
+                        ) = (new_root, old_root, a_key, a_value)
+                        {
+                            return Ok(Some(Operation(
+                                OperationType::Native(NativeOperation::ContainerUpdateFromEntries),
+                                vec![
+                                    OperationArg::from(Value::from(new_root_val)),
+                                    OperationArg::from(Value::from(old_root_val)),
+                                    OperationArg::from(key),
+                                    OperationArg::from(value),
+                                ],
+                                OperationAux::None,
+                            )));
+                        }
+                    }
+
                     Ok(Some(Operation::copy(head.clone())))
                 }
                 // TODO: Other container predicates should be supported

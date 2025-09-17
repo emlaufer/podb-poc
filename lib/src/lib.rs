@@ -1,5 +1,6 @@
 pub mod api;
 pub mod membership;
+pub mod public_log;
 pub mod utils;
 
 // Re-export the derive macro for convenience

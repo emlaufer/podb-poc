@@ -3,3 +3,4 @@
 *.pod
 target
 doc
+public_log.jsonl

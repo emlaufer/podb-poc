@@ -300,4 +300,3 @@ mod tests {
         matches!(result, PropagatorResult::Contradiction);
     }
 }
-

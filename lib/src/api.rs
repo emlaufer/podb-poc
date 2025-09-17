@@ -38,3 +38,22 @@ pub struct IsAdminProofResponse {
     pub is_admin_proof: MainPod,
     pub success: bool,
 }
+
+/// Public log entry for membership events
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type")]
+pub enum PublicLogEntry {
+    #[serde(rename = "init_membership")]
+    InitMembership {
+        state_commitment: Hash,
+        proof: MainPod,
+        timestamp: u64,
+    },
+    #[serde(rename = "update_state")]
+    UpdateState {
+        old_state_commitment: Hash,
+        new_state_commitment: Hash,
+        proof: MainPod,
+        timestamp: u64,
+    },
+}

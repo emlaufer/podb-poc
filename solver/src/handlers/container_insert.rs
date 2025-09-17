@@ -101,7 +101,6 @@ impl OpHandler for ContainerInsertFromEntriesHandler {
         if args.len() != 4 {
             return PropagatorResult::Contradiction;
         }
-        println!("IN PROPAGATE!");
         let (new_root, old_root, a_key, a_val) = (&args[0], &args[1], &args[2], &args[3]);
 
         let new_root_value = match new_root {
@@ -114,7 +113,6 @@ impl OpHandler for ContainerInsertFromEntriesHandler {
             StatementTmplArg::Wildcard(w) => store.bindings.get(&w.index).cloned(),
             _ => None,
         };
-        println!("NEW ROOT: {:?}, {:?}", new_root_value, old_root_value);
 
         match (new_root_value, old_root_value) {
             (Some(new_root_value), Some(old_root_value)) => {
@@ -138,7 +136,6 @@ impl OpHandler for ContainerInsertFromEntriesHandler {
             }
             _ => {}
         }
-        println!("Not literals...going to edb");
 
         // Enumeration: if both roots are unbound wildcards and key/value are known, enumerate candidate root pairs
         if let (StatementTmplArg::Wildcard(wnew), StatementTmplArg::Wildcard(wold)) =
@@ -161,7 +158,7 @@ impl OpHandler for ContainerInsertFromEntriesHandler {
                                 OpTag::GeneratedContainerInsert {
                                     new_root: new_hash,
                                     old_root: old_hash,
-                                    key: key.clone(),
+                                    key: Some(key.clone()),
                                     value: val.clone(),
                                 }
                             }
@@ -290,7 +287,6 @@ fn check_set_insert_for_known_set(
     a_val: &StatementTmplArg,
     store: &ConstraintStore,
 ) -> Option<PropagatorResult> {
-    println!("CHECK INSERT FOR KNOWN SET!");
     // For Sets, key and value arguments must unify to the same value.
     let (value_opt, bindings_opt) = match (a_key, a_val) {
         (StatementTmplArg::Literal(k), StatementTmplArg::Literal(v)) => {
@@ -336,7 +332,6 @@ fn check_set_insert_for_known_set(
         }
         _ => (None, None),
     };
-    println!("VALUE: {:?} {:?}", value_opt, bindings_opt);
 
     if value_opt.is_none() || bindings_opt.is_none() {
         return None;
@@ -351,7 +346,12 @@ fn check_set_insert_for_known_set(
 
     Some(PropagatorResult::Entailed {
         bindings,
-        op_tag: OpTag::FromLiterals,
+        op_tag: OpTag::GeneratedContainerInsert {
+            new_root: new_set.commitment(),
+            old_root: old_set.commitment(),
+            key: None,
+            value: value.clone(),
+        },
     })
 }
 

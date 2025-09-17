@@ -1,14 +1,16 @@
 use axum::{extract::State, response::Json};
 use lib::api::{
     AcceptInviteRequest, AcceptInviteResponse, IsAdminProofRequest, IsAdminProofResponse,
-    StateCommitmentResponse,
+    PublicLogEntry, StateCommitmentResponse,
 };
 use lib::membership::{MembershipError, MembershipProver, MembershipState, MembershipVerifier};
+use lib::public_log::PublicLog;
 use pod2::frontend::MainPod;
 use pod2::middleware::PublicKey;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{error, info, instrument};
 
@@ -17,6 +19,7 @@ pub struct MembershipService {
     current_state: MembershipState,
     prover: MembershipProver,
     verifier: MembershipVerifier,
+    public_log: PublicLog,
 }
 
 impl MembershipService {
@@ -25,20 +28,55 @@ impl MembershipService {
             current_state: MembershipState::default(),
             prover: MembershipProver::new(),
             verifier: MembershipVerifier::new(),
+            public_log: PublicLog::new(),
         }
     }
 
-    pub fn new_with_initial_admins(initial_admins: Vec<PublicKey>) -> Self {
+    pub fn new_with_initial_admins(
+        initial_admins: Vec<PublicKey>,
+    ) -> Result<Self, MembershipError> {
         let mut initial_state = MembershipState::default();
         for admin in initial_admins {
             initial_state.add_admin(admin);
         }
 
-        Self {
+        let mut service = Self {
             current_state: initial_state,
             prover: MembershipProver::new(),
             verifier: MembershipVerifier::new(),
+            public_log: PublicLog::new(),
+        };
+
+        // Generate and publish init_membership proof
+        service.init_membership()?;
+
+        Ok(service)
+    }
+
+    fn init_membership(&mut self) -> Result<(), MembershipError> {
+        // Generate init_membership proof
+        let init_proof = self.prover.prove_init_membership(&self.current_state)?;
+        let state_commitment = self.current_state.commitment();
+
+        // Publish to public log
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let log_entry = PublicLogEntry::InitMembership {
+            state_commitment,
+            proof: init_proof,
+            timestamp,
+        };
+
+        if let Err(e) = self.public_log.post(&log_entry) {
+            error!("Failed to publish init_membership to public log: {}", e);
+        } else {
+            info!("Published init_membership to public log");
         }
+
+        Ok(())
     }
 
     pub fn accept_invite(
@@ -78,9 +116,29 @@ impl MembershipService {
         let update_proof =
             self.prover
                 .prove_update_state(&self.current_state, &new_state, accept_invite_pod)?;
+        update_proof.pod.verify();
 
         // Update current state
         self.current_state = new_state;
+
+        // Publish to public log
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let log_entry = PublicLogEntry::UpdateState {
+            old_state_commitment,
+            new_state_commitment,
+            proof: update_proof.clone(),
+            timestamp,
+        };
+
+        if let Err(e) = self.public_log.post(&log_entry) {
+            error!("Failed to publish update_state to public log: {}", e);
+        } else {
+            info!("Published update_state to public log");
+        }
 
         Ok((update_proof, old_state_commitment, new_state_commitment))
     }
@@ -112,7 +170,6 @@ impl From<MembershipError> for MembershipServerError {
     }
 }
 
-#[instrument]
 pub async fn accept_invite(
     State(state): State<SharedState>,
     Json(request): Json<AcceptInviteRequest>,
@@ -143,7 +200,6 @@ pub async fn accept_invite(
     }
 }
 
-#[instrument]
 pub async fn prove_is_admin(
     State(state): State<SharedState>,
     Json(request): Json<IsAdminProofRequest>,
@@ -164,32 +220,4 @@ pub async fn prove_is_admin(
             Err(Json(MembershipServerError::from(err)))
         }
     }
-}
-
-#[instrument]
-pub async fn get_membership_state_commitment(
-    State(state): State<SharedState>,
-) -> Json<StateCommitmentResponse> {
-    info!("Membership state commitment request received");
-
-    let service = state.read().await;
-    let current_state = service.current_state();
-
-    let response = StateCommitmentResponse {
-        state_commitment: current_state.commitment(),
-        member_count: current_state.members.len(),
-    };
-
-    info!(
-        "Returning state commitment with {} members",
-        response.member_count
-    );
-
-    Json(response)
-}
-
-#[instrument]
-pub async fn hello() -> Json<Value> {
-    info!("Health check endpoint accessed");
-    Json(json!({ "message": "Hello from PODB server!" }))
 }

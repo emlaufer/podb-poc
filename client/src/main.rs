@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use lib::api::{AcceptInviteRequest, AcceptInviteResponse};
-use lib::membership::{MembershipProver, MembershipVerifier};
+use lib::api::{AcceptInviteRequest, AcceptInviteResponse, PublicLogEntry};
+use lib::membership::{MembershipProver, MembershipState, MembershipVerifier};
+use lib::public_log::PublicLog;
 use pod2::backends::plonky2::signer::Signer;
 use pod2::frontend::MainPod;
 use pod2::middleware::{PublicKey, SecretKey, Signer as SignerTrait};
@@ -72,6 +73,9 @@ enum Commands {
 
     /// Check server status
     Status,
+
+    /// Audit the public log by validating all proofs
+    Audit,
 }
 
 struct PodobClient {
@@ -211,35 +215,30 @@ impl PodobClient {
         Ok(result.is_admin_proof)
     }
 
-    async fn get_state_commitment(&self) -> Result<pod2::middleware::Hash> {
-        let url = format!("{}/membership/state-commitment", self.base_url);
+    fn get_state_commitment_from_log(&self) -> Result<pod2::middleware::Hash> {
+        let public_log = PublicLog::new();
+        let latest_entry: PublicLogEntry = public_log
+            .last()
+            .context("Failed to read latest entry from public log")?;
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to connect to server")?;
+        let state_commitment = match latest_entry {
+            PublicLogEntry::InitMembership {
+                state_commitment, ..
+            } => {
+                println!("Found init_membership entry in public log");
+                state_commitment
+            }
+            PublicLogEntry::UpdateState {
+                new_state_commitment,
+                ..
+            } => {
+                println!("Found update_state entry in public log");
+                new_state_commitment
+            }
+        };
 
-        if !response.status().is_success() {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            anyhow::bail!("Server returned error: {}", error_text);
-        }
-
-        let result: lib::api::StateCommitmentResponse = response
-            .json()
-            .await
-            .context("Failed to parse server response")?;
-
-        println!(
-            "Fetched state commitment with {} members",
-            result.member_count
-        );
-
-        Ok(result.state_commitment)
+        println!("Fetched latest state commitment from public log");
+        Ok(state_commitment)
     }
 
     fn generate_keypair(&self, name: &str) -> Result<()> {
@@ -293,12 +292,11 @@ impl PodobClient {
             .await
             .context("Failed to get is_admin proof from server")?;
 
-        // Get state commitment from server
-        println!("Getting state commitment from server...");
+        // Get state commitment from public log
+        println!("Getting state commitment from public log...");
         let state_commitment = self
-            .get_state_commitment()
-            .await
-            .context("Failed to get state commitment from server")?;
+            .get_state_commitment_from_log()
+            .context("Failed to get state commitment from public log")?;
 
         // Generate invite pod using state commitment and is_admin proof
         println!("Generating invite pod...");
@@ -343,12 +341,11 @@ impl PodobClient {
             .context("Failed to deserialize invitee private key from JSON")?;
         let invitee_signer = Signer(invitee_secret);
 
-        // Get state commitment from server
-        println!("Getting state commitment from server...");
+        // Get state commitment from public log
+        println!("Getting state commitment from public log...");
         let state_commitment = self
-            .get_state_commitment()
-            .await
-            .context("Failed to get state commitment from server")?;
+            .get_state_commitment_from_log()
+            .context("Failed to get state commitment from public log")?;
 
         // Generate accept invite pod using state commitment
         println!("Generating accept invite pod...");
@@ -366,6 +363,122 @@ impl PodobClient {
             "Accept invite pod generated and saved to: {}",
             output_path.display()
         );
+        Ok(())
+    }
+
+    fn audit_public_log(&self) -> Result<()> {
+        println!("🔍 Starting public log audit...");
+
+        let public_log = PublicLog::new();
+
+        // Check if log exists and has entries
+        let log_length = public_log
+            .len()
+            .context("Failed to get public log length")?;
+
+        if log_length == 0 {
+            println!("📝 Public log is empty - no entries to audit");
+            return Ok(());
+        }
+
+        println!("📝 Found {} entries in public log", log_length);
+
+        let mut valid_entries = 0;
+        let mut invalid_entries = 0;
+        let mut last_commitment = None;
+
+        // Process each entry in order
+        for i in 0..log_length {
+            let entry: PublicLogEntry = public_log
+                .get(i)
+                .with_context(|| format!("Failed to read entry {} from public log", i))?;
+
+            match &entry {
+                PublicLogEntry::InitMembership {
+                    state_commitment,
+                    proof,
+                    timestamp,
+                } => {
+                    println!(
+                        "\n📋 Entry {}: InitMembership (timestamp: {})",
+                        i, timestamp
+                    );
+                    last_commitment = Some(state_commitment.clone());
+
+                    // Verify init_membership proof with the state commitment from the entry
+                    match self
+                        .verifier
+                        .verify_init_membership(proof, state_commitment)
+                    {
+                        Ok(true) => {
+                            println!("  ✓ InitMembership proof verified successfully");
+                            valid_entries += 1;
+                        }
+                        Ok(false) => {
+                            println!("  ✗ InitMembership proof verification failed");
+                            invalid_entries += 1;
+                        }
+                        Err(e) => {
+                            println!("  ✗ InitMembership proof verification error: {:?}", e);
+                            invalid_entries += 1;
+                        }
+                    }
+                }
+
+                PublicLogEntry::UpdateState {
+                    old_state_commitment,
+                    new_state_commitment,
+                    proof,
+                    timestamp,
+                } => {
+                    println!("\n📋 Entry {}: UpdateState (timestamp: {})", i, timestamp);
+
+                    if Some(old_state_commitment) != last_commitment.as_ref() {
+                        println!("  ✗ UpdateState doesn't follow from last state");
+                        invalid_entries += 1;
+                        continue;
+                    }
+
+                    // Verify update proof
+                    match self.verifier.verify_update_state(
+                        proof,
+                        old_state_commitment,
+                        new_state_commitment,
+                    ) {
+                        Ok(true) => {
+                            println!("  ✓ UpdateState proof verified successfully");
+
+                            // We can't easily reconstruct the new state without knowing what member was added
+                            // But we can trust the new_state_commitment from the verified proof
+                            // For a complete audit, we'd need to store member additions in the log entries
+                            println!("  ✓ State transition verified");
+                            valid_entries += 1;
+                        }
+                        Ok(false) => {
+                            println!("  ✗ UpdateState proof verification failed");
+                            invalid_entries += 1;
+                        }
+                        Err(e) => {
+                            println!("  ✗ UpdateState proof verification error: {:?}", e);
+                            invalid_entries += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Summary
+        println!("\n🔍 Audit Summary:");
+        println!("   Total entries: {}", log_length);
+        println!("   Valid entries: {}", valid_entries);
+        println!("   Invalid entries: {}", invalid_entries);
+
+        if invalid_entries == 0 {
+            println!("   ✅ All entries passed verification!");
+        } else {
+            println!("   ⚠️  {} entries failed verification", invalid_entries);
+        }
+
         Ok(())
     }
 }
@@ -430,6 +543,10 @@ async fn main() -> Result<()> {
 
         Commands::Status => {
             client.check_status().await?;
+        }
+
+        Commands::Audit => {
+            client.audit_public_log()?;
         }
     }
 

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::ServerConfig;
@@ -29,7 +29,10 @@ async fn main() {
 
     // Load server configuration
     let config = ServerConfig::load_or_default("config.toml");
-    info!("Loaded configuration: bind address {}", config.bind_address());
+    info!(
+        "Loaded configuration: bind address {}",
+        config.bind_address()
+    );
 
     // Parse initial admins from config
     let initial_admins = match config.parse_initial_admins() {
@@ -39,7 +42,10 @@ async fn main() {
         }
         Err(e) => {
             if !config.membership.initial_admins.is_empty() {
-                warn!("Failed to parse initial admins from config: {}. Starting with empty admin set.", e);
+                warn!(
+                    "Failed to parse initial admins from config: {}. Starting with empty admin set.",
+                    e
+                );
             } else {
                 info!("No initial admins specified in config");
             }
@@ -51,13 +57,20 @@ async fn main() {
     let membership_service = if initial_admins.is_empty() {
         handlers::MembershipService::new()
     } else {
-        handlers::MembershipService::new_with_initial_admins(initial_admins)
+        match handlers::MembershipService::new_with_initial_admins(initial_admins) {
+            Ok(service) => service,
+            Err(e) => {
+                error!(
+                    "Failed to initialize membership service with initial admins: {:?}",
+                    e
+                );
+                std::process::exit(1);
+            }
+        }
     };
     let shared_state = Arc::new(RwLock::new(membership_service));
 
     let app = Router::new()
-        .route("/", get(handlers::hello))
-        .route("/membership/state-commitment", get(handlers::get_membership_state_commitment))
         .route("/membership/accept-invite", post(handlers::accept_invite))
         .route("/membership/prove-is-admin", post(handlers::prove_is_admin))
         .with_state(shared_state)

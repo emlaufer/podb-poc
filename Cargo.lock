@@ -566,7 +566,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1744,7 +1744,6 @@ source = "git+https://github.com/0xPARC/plonky2.git?rev=767a098d89b8d50d8aacfdce
 [[package]]
 name = "pod2"
 version = "0.1.0"
-source = "git+https://github.com/emlaufer/pod2?rev=02d2ef77e60ce887bc11ae49e24f0dad35ac6e7c#02d2ef77e60ce887bc11ae49e24f0dad35ac6e7c"
 dependencies = [
  "anyhow",
  "base64",

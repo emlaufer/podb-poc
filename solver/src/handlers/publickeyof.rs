@@ -80,7 +80,6 @@ impl OpHandler for PublicKeyOfHandler {
         match (sk_opt, pk_opt) {
             // Case 1: Secret key is known. We can derive the public key.
             (Some(sk), _) => {
-                println!("CASE 1");
                 let derived_pk = sk.public_key();
                 let derived_pk_val = Value::from(derived_pk);
 
@@ -120,22 +119,16 @@ impl OpHandler for PublicKeyOfHandler {
 
             // Case 2: Secret key is unknown, but public key is known.
             (None, Some(pk)) => {
-                println!("CASE 2");
                 if let Some(sk_from_edb) = edb.get_secret_key(&pk) {
                     let sk_val = Value::from(sk_from_edb.clone());
-                    println!("HI1");
                     match a_secret_key {
                         // If SK arg is a wildcard, bind it. Since sk_opt is None, we know it's unbound.
-                        StatementTmplArg::Wildcard(w) => {
-                            println!("HI2");
-                            PropagatorResult::Entailed {
-                                bindings: vec![(w.index, sk_val)],
-                                op_tag: OpTag::FromLiterals,
-                            }
-                        }
+                        StatementTmplArg::Wildcard(w) => PropagatorResult::Entailed {
+                            bindings: vec![(w.index, sk_val)],
+                            op_tag: OpTag::FromLiterals,
+                        },
                         // This case should be impossible, but we handle it defensively.
                         StatementTmplArg::Literal(v) => {
-                            println!("HI3");
                             if v == &sk_val {
                                 PropagatorResult::Entailed {
                                     bindings: vec![],
@@ -145,10 +138,7 @@ impl OpHandler for PublicKeyOfHandler {
                                 PropagatorResult::Contradiction
                             }
                         }
-                        _ => {
-                            println!("HI4");
-                            PropagatorResult::Contradiction
-                        }
+                        _ => PropagatorResult::Contradiction,
                     }
                 } else {
                     // We have a public key, but no corresponding secret key in the EDB.
@@ -167,7 +157,6 @@ impl OpHandler for PublicKeyOfHandler {
                     {
                         let mut alts = Vec::new();
                         for (pk_val, sk_val) in edb.enumerate_keypairs() {
-                            println!("alts are {} {}", sk_val, pk_val);
                             // Extract the actual keypair values for the OpTag
                             if let (Ok(sk), Ok(pk)) = (
                                 pod2::middleware::SecretKey::try_from(sk_val.typed()),

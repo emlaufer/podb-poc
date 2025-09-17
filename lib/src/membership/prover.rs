@@ -2,10 +2,10 @@ use hex::ToHex;
 use pod2::{
     backends::plonky2::{mock::mainpod::MockProver, signer::Signer},
     examples::MOCK_VD_SET,
-    frontend::{MainPod, SignedDictBuilder},
+    frontend::{MainPod, MainPodBuilder, Operation, SignedDictBuilder},
     lang::parse,
     middleware::{
-        CustomPredicateBatch, Params, PublicKey, SecretKey, Signer as SignerTrait, TypedValue,
+        CustomPredicateBatch, Key, Params, PublicKey, SecretKey, Signer as SignerTrait, TypedValue,
         Value, containers::Dictionary,
     },
 };
@@ -116,9 +116,6 @@ impl MembershipProver {
         pod2_solver::handlers::register_publickeyof_handlers(&mut registry);
         Self {
             params: Params {
-                max_input_pods_public_statements: 8,
-                max_statements: 24,
-                max_public_statements: 8,
                 ..Default::default()
             },
             registry: registry,
@@ -225,8 +222,6 @@ impl MembershipProver {
         let batch = self.create_membership_batch()?;
         let state_value = state.clone().to_pod_value();
 
-        println!("State is: {}", state_value);
-
         let request = format!(
             r#"
             use init_membership, _, _, _ from 0x{}
@@ -268,7 +263,6 @@ impl MembershipProver {
             state_value,
             Value::new(invite_pk.into())
         );
-        println!("REAL REQUEST: {}", request);
 
         self.prove_with_request_and_edb(request, move || {
             edb::ImmutableEdbBuilder::new()
@@ -303,8 +297,6 @@ impl MembershipProver {
             state_value,
             Value::new(invite_pk.into())
         );
-        println!("PRIOR POD: {}", invite_pod);
-        println!("REQUEST: {}", request);
 
         self.prove_with_request_and_edb(request, move || {
             edb::ImmutableEdbBuilder::new()
@@ -322,17 +314,28 @@ impl MembershipProver {
     ) -> Result<MainPod, MembershipError> {
         debug!("Input accept_invite pod: {}", accept_invite_pod);
 
+        // NOTE: I manually prove this predicate, because the solver doesn't have
+        // full support for it yet.
+
         let batch = self.create_membership_batch()?;
         let old_state_value = old_state.clone().to_pod_value();
         let new_state_value = new_state.clone().to_pod_value();
 
         let old_state_dict = match old_state_value.typed() {
             TypedValue::Dictionary(dict) => dict.clone(),
-            _ => panic!(),
+            _ => {
+                return Err(MembershipError::ProofError(
+                    "Old state value is not a dictionary".to_string(),
+                ));
+            }
         };
         let new_state_dict = match new_state_value.typed() {
             TypedValue::Dictionary(dict) => dict.clone(),
-            _ => panic!(),
+            _ => {
+                return Err(MembershipError::ProofError(
+                    "New state value is not a dictionary".to_string(),
+                ));
+            }
         };
 
         let request = format!(
@@ -347,13 +350,124 @@ impl MembershipProver {
             old_state_value,
             new_state_value,
         );
-        println!("REQUEST IS: {}", request);
-        self.prove_with_request_and_edb(request, move || {
-            edb::ImmutableEdbBuilder::new()
-                .add_main_pod(accept_invite_pod)
-                .add_full_dict(old_state_dict)
-                .add_full_dict(new_state_dict)
-                .build()
+
+        let batch = self.create_membership_batch()?;
+        let query_batch = self.create_query_batch()?;
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+
+        let processed = parse(
+            &request,
+            &self.params,
+            &[batch.clone(), query_batch.clone()],
+        )
+        .map_err(|e| MembershipError::ParseError(e.to_string()))?;
+
+        let accept_invite_pred = batch
+            .predicate_ref_by_name("accept_invite")
+            .ok_or_else(|| {
+                MembershipError::ProofError("accept_invite predicate not found".to_string())
+            })?;
+        let update_state_pred = batch.predicate_ref_by_name("update_state").ok_or_else(|| {
+            MembershipError::ProofError("update_state predicate not found".to_string())
+        })?;
+
+        let mut builder = MainPodBuilder::new(&self.params, vd_set);
+        builder.add_pod(accept_invite_pod.clone());
+        let accept_invite_stmt = &accept_invite_pod.public_statements[0];
+
+        let new_member_set = match new_state_dict.get(&Key::from("members")) {
+            Ok(value) => match value.typed() {
+                TypedValue::Set(set) => set,
+                _ => {
+                    return Err(MembershipError::ProofError(
+                        "members value is not a set in new state".to_string(),
+                    ));
+                }
+            },
+            Err(_) => {
+                return Err(MembershipError::ProofError(
+                    "members key not found in new state".to_string(),
+                ));
+            }
+        };
+        let old_member_set = match old_state_dict.get(&Key::from("members")) {
+            Ok(value) => match value.typed() {
+                TypedValue::Set(set) => set,
+                _ => {
+                    return Err(MembershipError::ProofError(
+                        "members value is not a set in old state".to_string(),
+                    ));
+                }
+            },
+            Err(_) => {
+                return Err(MembershipError::ProofError(
+                    "members key not found in old state".to_string(),
+                ));
+            }
+        };
+        let member_difference = new_member_set.set().difference(old_member_set.set());
+        let member_diff_vec: Vec<_> = member_difference.collect();
+        if member_diff_vec.len() > 1 {
+            return Err(MembershipError::ProofError(format!(
+                "Expected exactly one new member, but found {} new members: {:?}",
+                member_diff_vec.len(),
+                member_diff_vec
+            )));
+        }
+        let new_member = member_diff_vec.first().ok_or_else(|| {
+            MembershipError::ProofError("No new member found in state difference".to_string())
+        })?;
+        let insert_stmt = builder
+            .priv_op(Operation::set_insert(
+                new_member_set.clone(),
+                old_member_set.clone(),
+                *new_member,
+            ))
+            .map_err(|e| {
+                MembershipError::ProofError(format!("Failed to create set_insert operation: {}", e))
+            })?;
+        let contains_stmt = builder
+            .priv_op(Operation::dict_contains(
+                old_state_dict.clone(),
+                "members",
+                old_member_set.clone(),
+            ))
+            .map_err(|e| {
+                MembershipError::ProofError(format!(
+                    "Failed to create dict_contains operation: {}",
+                    e
+                ))
+            })?;
+        let update_stmt = builder
+            .priv_op(Operation::dict_update(
+                new_state_dict.clone(),
+                old_state_dict.clone(),
+                "members",
+                new_member_set.clone(),
+            ))
+            .map_err(|e| {
+                MembershipError::ProofError(format!(
+                    "Failed to create dict_update operation: {}",
+                    e
+                ))
+            })?;
+        let _final_stmt = builder
+            .pub_op(Operation::custom(
+                update_state_pred,
+                [
+                    accept_invite_stmt.clone(),
+                    insert_stmt,
+                    contains_stmt,
+                    update_stmt,
+                ],
+            ))
+            .map_err(|e| {
+                MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
+            })?;
+
+        builder.prove(&prover).map_err(|e| {
+            MembershipError::ProofError(format!("Failed to prove update_state: {}", e))
         })
     }
 

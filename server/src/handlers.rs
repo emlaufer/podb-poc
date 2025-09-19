@@ -1,12 +1,14 @@
 use axum::{extract::State, response::Json};
 use lib::api::{
-    AcceptInviteRequest, AcceptInviteResponse, IsAdminProofRequest, IsAdminProofResponse,
-    PublicLogEntry, StateCommitmentResponse,
+    AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse,
+    IsAdminProofRequest, IsAdminProofResponse, PublicLogEntry, StateCommitmentResponse,
 };
-use lib::membership::{MembershipError, MembershipProver, MembershipState, MembershipVerifier};
+use lib::membership::{
+    MembershipError, MembershipProver, MembershipState, MembershipVerifier, Post,
+};
 use lib::public_log::PublicLog;
 use pod2::frontend::MainPod;
-use pod2::middleware::PublicKey;
+use pod2::middleware::{PublicKey, Signature};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -115,7 +117,7 @@ impl MembershipService {
         // Generate update proof
         let update_proof =
             self.prover
-                .prove_update_state(&self.current_state, &new_state, accept_invite_pod)?;
+                .prove_add_member(&self.current_state, &new_state, accept_invite_pod)?;
         update_proof.pod.verify();
 
         // Update current state
@@ -145,6 +147,64 @@ impl MembershipService {
 
     pub fn prove_is_admin(&self, public_key: PublicKey) -> Result<MainPod, MembershipError> {
         self.prover.prove_is_admin(&self.current_state, public_key)
+    }
+
+    pub fn add_post(
+        &mut self,
+        post: Post,
+        author: PublicKey,
+        signature: Signature,
+    ) -> Result<(MainPod, pod2::middleware::Hash, pod2::middleware::Hash), MembershipError> {
+        // Verify that the post author matches the provided public key
+        if post.author != author {
+            return Err(MembershipError::ProofError(
+                "Post author does not match provided public key".to_string(),
+            ));
+        }
+
+        // Verify that the author is a member
+        if !self.current_state.members.contains(&author) {
+            return Err(MembershipError::ProofError(
+                "Only members can add posts".to_string(),
+            ));
+        }
+
+        // Get old state commitment
+        let old_state_commitment = self.current_state.commitment();
+
+        // Create new state with added post
+        let mut new_state = self.current_state.clone();
+        new_state.add_post(post.clone());
+        let new_state_commitment = new_state.commitment();
+
+        // Generate add_post proof
+        let update_proof =
+            self.prover
+                .prove_add_post(&self.current_state, &new_state, &signature)?;
+
+        // Update current state
+        self.current_state = new_state;
+
+        // Publish to public log
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let log_entry = PublicLogEntry::UpdateState {
+            old_state_commitment,
+            new_state_commitment,
+            proof: update_proof.clone(),
+            timestamp,
+        };
+
+        if let Err(e) = self.public_log.post(&log_entry) {
+            error!("Failed to publish add_post to public log: {}", e);
+        } else {
+            info!("Published add_post to public log");
+        }
+
+        Ok((update_proof, old_state_commitment, new_state_commitment))
     }
 
     pub fn current_state(&self) -> &MembershipState {
@@ -217,6 +277,36 @@ pub async fn prove_is_admin(
         }
         Err(err) => {
             error!("Failed to generate is_admin proof: {:?}", err);
+            Err(Json(MembershipServerError::from(err)))
+        }
+    }
+}
+
+pub async fn add_post(
+    State(state): State<SharedState>,
+    Json(request): Json<AddPostRequest>,
+) -> Result<Json<AddPostResponse>, Json<MembershipServerError>> {
+    info!("Add post request received");
+
+    let mut service = state.write().await;
+    match service.add_post(request.post, request.author_public_key, request.signature) {
+        Ok((update_proof, old_state_commitment, new_state_commitment)) => {
+            let total_posts = service.current_state().posts.len();
+            info!(
+                "Successfully processed add post, total posts: {}",
+                total_posts
+            );
+
+            Ok(Json(AddPostResponse {
+                update_proof,
+                old_state_commitment,
+                new_state_commitment,
+                total_posts,
+                success: true,
+            }))
+        }
+        Err(err) => {
+            error!("Failed to process add post: {:?}", err);
             Err(Json(MembershipServerError::from(err)))
         }
     }

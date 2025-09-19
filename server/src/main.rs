@@ -73,6 +73,7 @@ async fn main() {
     let app = Router::new()
         .route("/membership/accept-invite", post(handlers::accept_invite))
         .route("/membership/prove-is-admin", post(handlers::prove_is_admin))
+        .route("/posts/add", post(handlers::add_post))
         .with_state(shared_state)
         .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()));
 

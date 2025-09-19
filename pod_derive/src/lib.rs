@@ -4,8 +4,7 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields};
 
 /// Derive macro for IntoTypedValue trait
 ///
-/// This macro generates a direct implementation of IntoTypedValue for structs,
-/// avoiding JSON serialization overhead and providing direct field-by-field conversion.
+/// This macro generates a direct implementation of IntoTypedValue for structs.
 ///
 /// Example usage:
 /// ```

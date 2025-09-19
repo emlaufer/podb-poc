@@ -1,5 +1,6 @@
+use crate::membership::Post;
 use pod2::frontend::MainPod;
-use pod2::middleware::{PublicKey, Hash};
+use pod2::middleware::{Hash, PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 
 /// Request to accept an invite
@@ -36,6 +37,24 @@ pub struct IsAdminProofRequest {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct IsAdminProofResponse {
     pub is_admin_proof: MainPod,
+    pub success: bool,
+}
+
+/// Request to add a new post
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AddPostRequest {
+    pub post: Post,
+    pub author_public_key: PublicKey,
+    pub signature: Signature,
+}
+
+/// Response from adding a post
+#[derive(Debug, Deserialize, Serialize)]
+pub struct AddPostResponse {
+    pub update_proof: MainPod,
+    pub old_state_commitment: Hash,
+    pub new_state_commitment: Hash,
+    pub total_posts: usize,
     pub success: bool,
 }
 

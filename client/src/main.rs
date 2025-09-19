@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use lib::api::{AcceptInviteRequest, AcceptInviteResponse, PublicLogEntry};
-use lib::membership::{MembershipProver, MembershipState, MembershipVerifier};
+use lib::api::{
+    AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse, PublicLogEntry,
+};
+use lib::membership::{MembershipProver, MembershipState, MembershipVerifier, Post};
 use lib::public_log::PublicLog;
+use lib::utils::ToPodValue;
 use pod2::backends::plonky2::signer::Signer;
 use pod2::frontend::MainPod;
 use pod2::middleware::{PublicKey, SecretKey, Signer as SignerTrait};
@@ -69,6 +72,16 @@ enum Commands {
         /// Path to the member's public key file
         #[arg(long)]
         member_public_key: PathBuf,
+    },
+
+    /// Add a new post to the membership system
+    AddPost {
+        /// Content of the post
+        content: String,
+
+        /// Path to the author's private key file
+        #[arg(long)]
+        author_key: PathBuf,
     },
 
     /// Check server status
@@ -366,6 +379,81 @@ impl PodobClient {
         Ok(())
     }
 
+    async fn add_post(
+        &self,
+        content: String,
+        author_key_path: &PathBuf,
+    ) -> Result<AddPostResponse> {
+        // Load author private key from JSON
+        let author_key_json = fs::read_to_string(author_key_path)
+            .context("Failed to read author private key file")?;
+        let author_secret: SecretKey = serde_json::from_str(&author_key_json)
+            .context("Failed to deserialize author private key from JSON")?;
+        let author_public_key = author_secret.public_key();
+
+        // Create the post
+        let post = Post {
+            content,
+            author: author_public_key,
+        };
+        let signature = Signer(author_secret).sign(post.clone().to_raw_value());
+
+        let url = format!("{}/posts/add", self.base_url);
+        let request = AddPostRequest {
+            post,
+            author_public_key,
+            signature,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send request to server")?;
+
+        if !response.status().is_success() {
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            anyhow::bail!("Server returned error: {}", error_text);
+        }
+
+        let result: AddPostResponse = response
+            .json()
+            .await
+            .context("Failed to parse server response")?;
+
+        // Verify the state transition proof returned by the server
+        if result.success {
+            println!("Verifying state transition proof...");
+
+            // Verify the update proof with the commitments provided by server
+            match self.verifier.verify_update_state(
+                &result.update_proof,
+                &result.old_state_commitment,
+                &result.new_state_commitment,
+            ) {
+                Ok(true) => println!("✓ Server's state transition proof verified successfully!"),
+                Ok(false) => {
+                    println!("⚠ Warning: Server's state transition proof verification failed!");
+                }
+                Err(e) => {
+                    println!(
+                        "⚠ Warning: Failed to verify server's state transition proof: {:?}",
+                        e
+                    );
+                }
+            }
+
+            println!("✓ State transition verification complete");
+        }
+
+        Ok(result)
+    }
+
     fn audit_public_log(&self) -> Result<()> {
         println!("🔍 Starting public log audit...");
 
@@ -538,6 +626,21 @@ async fn main() -> Result<()> {
                 println!("  New member count: {}", response.new_member_count);
             } else {
                 println!("✗ Failed to add member");
+            }
+        }
+
+        Commands::AddPost {
+            content,
+            author_key,
+        } => {
+            println!("Adding post to membership system...");
+            let response = client.add_post(content, &author_key).await?;
+
+            if response.success {
+                println!("✓ Post successfully added!");
+                println!("  Total posts: {}", response.total_posts);
+            } else {
+                println!("✗ Failed to add post");
             }
         }
 

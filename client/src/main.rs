@@ -526,6 +526,7 @@ impl PodobClient {
                         invalid_entries += 1;
                         continue;
                     }
+                    last_commitment = Some(new_state_commitment.clone());
 
                     // Verify update proof
                     match self.verifier.verify_update_state(

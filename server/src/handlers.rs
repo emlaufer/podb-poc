@@ -118,7 +118,6 @@ impl MembershipService {
         let update_proof =
             self.prover
                 .prove_add_member(&self.current_state, &new_state, accept_invite_pod)?;
-        update_proof.pod.verify();
 
         // Update current state
         self.current_state = new_state;

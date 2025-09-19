@@ -10,6 +10,7 @@ use pod2::lang::parse;
 use pod2::middleware::{CustomPredicateBatch, Params};
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct Predicates {
     pub state: Arc<CustomPredicateBatch>,
     pub membership: Arc<CustomPredicateBatch>,

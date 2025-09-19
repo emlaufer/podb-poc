@@ -7,6 +7,7 @@ use pod2::{
 use std::sync::Arc;
 use tracing::debug;
 
+use crate::membership::predicates::Predicates;
 use crate::membership::*;
 use crate::utils::ToPodValue;
 
@@ -40,33 +41,25 @@ impl std::fmt::Display for VerificationError {
 #[derive(Debug)]
 pub struct MembershipVerifier {
     params: Params,
+    predicates: Predicates,
 }
 
 impl MembershipVerifier {
     /// Create a new membership verifier
     pub fn new() -> Self {
-        Self {
-            params: Params::default(),
-        }
+        let params = Params::default();
+        let predicates = Predicates::new(&params);
+        Self { params, predicates }
     }
 
     /// Create a membership batch containing all predicates
     fn create_query_batch(&self) -> Result<Arc<CustomPredicateBatch>, VerificationError> {
-        let query_batch_content = query_predicates();
-        let query_batch = parse(&query_batch_content, &self.params, &[])
-            .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
-            .custom_batch;
-        Ok(query_batch)
+        Ok(self.predicates.query.clone())
     }
 
     /// Create a membership batch containing all predicates
     fn create_membership_batch(&self) -> Result<Arc<CustomPredicateBatch>, VerificationError> {
-        let query_batch = self.create_query_batch()?;
-        let batch_content = membership_predicates(query_batch.clone());
-        let batch = parse(&batch_content, &self.params, &[query_batch])
-            .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
-            .custom_batch;
-        Ok(batch)
+        Ok(self.predicates.membership.clone())
     }
 
     /// Verify an init membership proof
@@ -92,7 +85,8 @@ impl MembershipVerifier {
 
         debug!("Verification query: {}", query);
 
-        let request = parse(&query, &self.params, std::slice::from_ref(&batch))
+        let query_batch = &self.predicates.query;
+        let request = parse(&query, &self.params, &[batch.clone(), query_batch.clone()])
             .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
             .request;
 
@@ -144,7 +138,8 @@ impl MembershipVerifier {
 
         debug!("Verification query: {}", query);
 
-        let request = parse(&query, &self.params, std::slice::from_ref(&batch))
+        let query_batch = &self.predicates.query;
+        let request = parse(&query, &self.params, &[batch.clone(), query_batch.clone()])
             .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
             .request;
 
@@ -183,7 +178,8 @@ impl MembershipVerifier {
 
         debug!("Verification query: {}", query);
 
-        let request = parse(&query, &self.params, std::slice::from_ref(&batch))
+        let query_batch = &self.predicates.query;
+        let request = parse(&query, &self.params, &[batch.clone(), query_batch.clone()])
             .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
             .request;
 
@@ -204,28 +200,33 @@ impl MembershipVerifier {
         expected_old_state: &Hash,
         expected_new_state: &Hash,
     ) -> Result<bool, VerificationError> {
-        let batch = self.create_membership_batch()?;
+        let state_batch = self.predicates.state.clone();
         let old_state_value = expected_old_state.clone().to_pod_value();
         let new_state_value = expected_new_state.clone().to_pod_value();
 
         let query = format!(
             r#"
-            use _, _, _, update_state from 0x{}
+            use _, update_state from 0x{}
 
             REQUEST(
                 update_state({}, {})
             )
             "#,
-            batch.id().encode_hex::<String>(),
+            state_batch.id().encode_hex::<String>(),
             old_state_value,
             new_state_value
         );
 
         debug!("Verification query: {}", query);
 
-        let request = parse(&query, &self.params, std::slice::from_ref(&batch))
-            .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
-            .request;
+        let query_batch = &self.predicates.query;
+        let request = parse(
+            &query,
+            &self.params,
+            &[state_batch.clone(), query_batch.clone()],
+        )
+        .map_err(|e| VerificationError::InvalidProof(format!("Parse error: {:?}", e)))?
+        .request;
 
         proof.pod.verify().map_err(|e| {
             VerificationError::VerificationFailed(format!("Verification error: {:?}", e))

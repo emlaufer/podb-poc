@@ -1,7 +1,7 @@
 use axum::{extract::State, response::Json};
 use lib::api::{
     AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse,
-    IsAdminProofRequest, IsAdminProofResponse, PublicLogEntry, StateCommitmentResponse,
+    IsAdminProofRequest, IsAdminProofResponse, PublicLogEntry,
 };
 use lib::membership::{
     MembershipError, MembershipProver, MembershipState, MembershipVerifier, Post,
@@ -10,11 +10,10 @@ use lib::public_log::PublicLog;
 use pod2::frontend::MainPod;
 use pod2::middleware::{PublicKey, Signature};
 use serde::Serialize;
-use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
-use tracing::{error, info, instrument};
+use tracing::{error, info};
 
 #[derive(Debug)]
 pub struct MembershipService {

@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use lib::api::{
     AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse, PublicLogEntry,
 };
-use lib::membership::{MembershipProver, MembershipState, MembershipVerifier, Post};
+use lib::membership::{MembershipProver, MembershipVerifier, Post};
 use lib::public_log::PublicLog;
 use lib::utils::ToPodValue;
 use pod2::backends::plonky2::signer::Signer;

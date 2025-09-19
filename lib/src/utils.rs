@@ -1,6 +1,4 @@
-use pod2::backends::plonky2::signer::Signer;
-use pod2::frontend::{SignedDict, SignedDictBuilder};
-use pod2::middleware::{Params, RawValue, TypedValue, Value, containers::Dictionary};
+use pod2::middleware::{RawValue, TypedValue, Value};
 
 pub trait ToPodValue {
     fn to_pod_value(self) -> Value;

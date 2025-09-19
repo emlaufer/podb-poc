@@ -7,7 +7,7 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields};
 /// This macro generates a direct implementation of IntoTypedValue for structs.
 ///
 /// Example usage:
-/// ```
+/// ```ignore
 /// use pod_derive::IntoTypedValue;
 ///
 /// #[derive(IntoTypedValue)]

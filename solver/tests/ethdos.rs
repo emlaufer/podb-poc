@@ -72,7 +72,7 @@ fn engine_ethdos_end_to_end() -> Result<(), String> {
   use _, _, _, eth_dos from 0x{}
 
   REQUEST(
-      eth_dos(PublicKey({}), PublicKey({}), ?Distance)
+      eth_dos(PublicKey({}), PublicKey({}), Distance)
   )
   "#,
         batch.id().encode_hex::<String>(),
@@ -126,7 +126,7 @@ fn engine_ethdos_end_to_end() -> Result<(), String> {
     use _, _, _, eth_dos from 0x{}
   
     REQUEST(
-        eth_dos(PublicKey({}), PublicKey({}), ?Distance)
+        eth_dos(PublicKey({}), PublicKey({}), Distance)
     )
     "#,
         batch.id().encode_hex::<String>(),
@@ -182,7 +182,7 @@ fn engine_ethdos_end_to_end() -> Result<(), String> {
     use _, _, _, eth_dos from 0x{}
   
     REQUEST(
-        eth_dos(PublicKey({}), PublicKey({}), ?Distance)
+        eth_dos(PublicKey({}), PublicKey({}), Distance)
     )
     "#,
         batch.id().encode_hex::<String>(),

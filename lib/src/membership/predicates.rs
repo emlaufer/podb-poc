@@ -63,13 +63,13 @@ use _, _, _, add_member from 0x{}
 use _, add_post from 0x{}
 
 init_state(state) = AND(
-    DictContains(?state, "members", 0)
-    DictContains(?state, "posts", 0)
+    DictContains(state, "members", 0)
+    DictContains(state, "posts", 0)
 )
 
 update_state(old_state, new_state) = OR(
-    add_member(?old_state, ?new_state)
-    add_post(?old_state, ?new_state)
+    add_member(old_state, new_state)
+    add_post(old_state, new_state)
 )"#,
         membership_batch.id().encode_hex::<String>(),
         post_batch.id().encode_hex::<String>(),
@@ -83,27 +83,27 @@ pub fn membership_predicates(query_batch: Arc<CustomPredicateBatch>) -> String {
 use is_admin, _, _ from 0x{}
 
 init_membership(state) = AND(
-    DictContains(?state, "members", 0)
-    DictContains(?state, "posts", 0)
+    DictContains(state, "members", 0)
+    DictContains(state, "posts", 0)
 )
 
 invite(state, invite_pk, private: admin_sk, admin_pk) = AND(
-    is_admin(?state, ?admin_pk)
-    PublicKeyOf(?admin_pk, ?admin_sk)
+    is_admin(state, admin_pk)
+    PublicKeyOf(admin_pk, admin_sk)
     // annoying - need this to bind invite_pk arg to correct value
-    Equal(?invite_pk, ?invite_pk) 
+    Equal(invite_pk, invite_pk) 
 )
 
 accept_invite(state, invite_pk, private: admin_pk, invite_sk) = AND(
-    invite(?state, ?invite_pk)
-    PublicKeyOf(?invite_pk, ?invite_sk)
+    invite(state, invite_pk)
+    PublicKeyOf(invite_pk, invite_sk)
 )
 
 add_member(old_state, new_state, private: invite_pk, old_member_set, new_member_set) = AND(
-    accept_invite(?old_state, ?invite_pk)
-    SetInsert(?new_member_set, ?old_member_set, ?invite_pk)
-    DictContains(?old_state, "members", ?old_member_set)
-    DictUpdate(?new_state, ?old_state, "members", ?new_member_set)
+    accept_invite(old_state, invite_pk)
+    SetInsert(new_member_set, old_member_set, invite_pk)
+    DictContains(old_state, "members", old_member_set)
+    DictUpdate(new_state, old_state, "members", new_member_set)
 )
 "#,
         query_batch.id().encode_hex::<String>()
@@ -118,16 +118,16 @@ use _, is_member, _ from 0x{}
 
 // I split this from add_post to avoid going over the custom statement arity limit
 valid_post(post, author_pk) = AND(
-    DictContains(?post, "author", ?author_pk)
-    SignedBy(?post, ?author_pk)
+    DictContains(post, "author", author_pk)
+    SignedBy(post, author_pk)
 )
 
 add_post(old_state, new_state, private: post, author_pk, old_posts, new_posts) = AND(
-    valid_post(?post, ?author_pk)
-    is_member(?old_state, ?author_pk) 
-    SetInsert(?new_posts, ?old_posts, ?post)
-    DictContains(?old_state, "posts", ?old_posts)
-    DictUpdate(?new_state, ?old_state, "posts", ?new_posts)
+    valid_post(post, author_pk)
+    is_member(old_state, author_pk) 
+    SetInsert(new_posts, old_posts, post)
+    DictContains(old_state, "posts", old_posts)
+    DictUpdate(new_state, old_state, "posts", new_posts)
 )
 "#,
         query_batch.id().encode_hex::<String>()
@@ -138,18 +138,18 @@ add_post(old_state, new_state, private: post, author_pk, old_posts, new_posts) =
 pub fn query_predicates() -> &'static str {
     r#"
 is_admin(state, admin_pk, private: admin_set) = AND(
-    DictContains(?state, "admins", ?admin_set)
-    SetContains(?admin_set, ?admin_pk)
+    DictContains(state, "admins", admin_set)
+    SetContains(admin_set, admin_pk)
 )
 
 is_member(state, member_pk, private: member_set) = AND(
-    DictContains(?state, "members", ?member_set)
-    SetContains(?member_set, ?member_pk)
+    DictContains(state, "members", member_set)
+    SetContains(member_set, member_pk)
 )
 
 is_not_member(state, member_pk, private: member_set) = AND(
-    DictContains(?state, "members", ?member_set)
-    SetNotContains(?member_set, ?member_pk)
+    DictContains(state, "members", member_set)
+    SetNotContains(member_set, member_pk)
 )
 "#
 }

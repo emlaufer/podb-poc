@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tracing::debug;
 
 use crate::membership::predicates::Predicates;
-use crate::membership::*;
 use crate::utils::ToPodValue;
 
 /// Error type for membership verification operations
@@ -53,6 +52,7 @@ impl MembershipVerifier {
     }
 
     /// Create a membership batch containing all predicates
+    #[allow(dead_code)] // not used yet
     fn create_query_batch(&self) -> Result<Arc<CustomPredicateBatch>, VerificationError> {
         Ok(self.predicates.query.clone())
     }

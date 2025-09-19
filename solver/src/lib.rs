@@ -1,3 +1,5 @@
+#![allow(warnings)] // Suppress warnings in this temporary copy of the solver
+
 pub mod custom;
 pub mod debug;
 pub mod edb;

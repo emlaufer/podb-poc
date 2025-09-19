@@ -3,7 +3,7 @@ mod handlers;
 
 use axum::{
     Router,
-    routing::{get, post},
+    routing::post,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;

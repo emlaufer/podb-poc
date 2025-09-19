@@ -2,11 +2,11 @@ use hex::ToHex;
 use pod2::{
     backends::plonky2::{mock::mainpod::MockProver, signer::Signer},
     examples::MOCK_VD_SET,
-    frontend::{MainPod, MainPodBuilder, Operation, SignedDict, SignedDictBuilder},
+    frontend::{MainPod, MainPodBuilder, Operation, SignedDictBuilder},
     lang::parse,
     middleware::{
-        CustomPredicateBatch, Key, Params, PublicKey, SecretKey, Signature, Signer as SignerTrait,
-        Statement, TypedValue, Value, containers::Dictionary,
+        Key, Params, PublicKey, Signature, Signer as SignerTrait,
+        Statement, TypedValue, Value,
     },
 };
 use pod2_solver::{
@@ -17,11 +17,9 @@ use pod2_solver::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::Arc;
 use tracing::debug;
 
 use crate::membership::predicates::Predicates;
-use crate::membership::*;
 use crate::utils::ToPodValue;
 use pod_derive::IntoTypedValue;
 
@@ -311,7 +309,6 @@ impl MembershipProver {
         // NOTE: I manually prove this predicate, because the solver doesn't have
         // full support for it yet.
 
-        let batch = &self.predicates.membership;
         let old_state_value = old_state.clone().to_pod_value();
         let new_state_value = new_state.clone().to_pod_value();
 
@@ -335,13 +332,6 @@ impl MembershipProver {
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
 
-        let accept_invite_pred = self
-            .predicates
-            .membership
-            .predicate_ref_by_name("accept_invite")
-            .ok_or_else(|| {
-                MembershipError::ProofError("accept_invite predicate not found".to_string())
-            })?;
         let add_member_pred = self
             .predicates
             .membership
@@ -451,7 +441,7 @@ impl MembershipProver {
                 MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
             })?;
 
-        let update_stmt = builder
+        let _update_stmt = builder
             .pub_op(Operation::custom(
                 update_state_pred,
                 [add_member_stmt, Statement::None],
@@ -578,7 +568,7 @@ impl MembershipProver {
             ));
         };
         let post_author = new_post_dict.get(&Key::from("author")).map_err(|e| {
-            MembershipError::ProofError("Failed to get author from new post!".to_string())
+            MembershipError::ProofError(format!("Failed to get author from new post: {}", e))
         })?;
         let old_member_set = match old_state_dict.get(&Key::from("members")) {
             Ok(value) => match value.typed() {
@@ -622,7 +612,7 @@ impl MembershipProver {
 
         let author_stmt = builder
             .priv_op(Operation::dict_contains(
-                new_post.clone(),
+                *new_post,
                 "author",
                 post_author,
             ))
@@ -696,7 +686,7 @@ impl MembershipProver {
                 MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
             })?;
 
-        let update_stmt = builder
+        let _update_stmt = builder
             .pub_op(Operation::custom(
                 update_state_pred,
                 [Statement::None, add_post_stmt],
@@ -752,6 +742,8 @@ impl Default for MembershipProver {
 
 #[cfg(test)]
 mod tests {
+    use pod2::middleware::{containers::Dictionary, SecretKey};
+
     use super::*;
 
     #[test]
@@ -773,26 +765,39 @@ mod tests {
         let prover = MembershipProver::new();
 
         // Create test signers
-        let admin_signer = Signer(pod2::middleware::SecretKey::new_rand());
-        let invite_signer = Signer(pod2::middleware::SecretKey::new_rand());
-        let invitee_signer = Signer(pod2::middleware::SecretKey::new_rand());
+        let admin_signer = Signer(SecretKey::new_rand());
+        let invite_signer = Signer(SecretKey::new_rand());
 
         // 1. Initialize membership state with admin
         let mut state = MembershipState::default();
         state.add_admin(admin_signer.public_key());
-
-        // This test shows the structure but won't run until we have proper membership predicates
-        // For now we test basic functionality
         assert!(!state.admins.is_empty());
         assert!(state.members.is_empty());
+        assert!(!prover.prove_init_membership(&state)
+                    .expect("failed to prove init membership").public_statements.is_empty());
 
-        // Test batch access
-        let _batch = &prover.predicates.membership;
-        let _query_batch = &prover.predicates.query;
-        //assert!(
-        //    batch_result.is_ok(),
-        //    "Batch creation should succeed with placeholder"
-        //);
+        // 2. Admin generates an invite
+        let is_admin_proof = prover
+            .prove_is_admin(&state, admin_signer.public_key())
+            .expect("Should be able to prove admin status");
+        let state_commitment = state.commitment();
+        let invite_pod = prover.prove_invite(
+                state_commitment, invite_signer.public_key(), &admin_signer, &is_admin_proof
+            ).expect("failed to prove invite");
+        assert!(!invite_pod.public_statements.is_empty());
+
+        // 3. User accepts the invite
+        let accept_invite_pod = prover.prove_accept_invite(
+            state_commitment, &invite_signer, &invite_pod
+        ).expect("failed to prove accept invite");
+        assert!(!accept_invite_pod.public_statements.is_empty());
+
+        // 4. AD adds user as a member
+        let old_state = state.clone();
+        state.add_member(invite_signer.public_key());
+        let add_member_pod = prover.prove_add_member(
+            &old_state, &state, &accept_invite_pod).expect("failed to prove add member");
+        assert!(!add_member_pod.public_statements.is_empty())
     }
 
     #[test]
@@ -1025,7 +1030,7 @@ mod tests {
         match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
-                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty()); // Either way is valid
+                assert!(!pod.public_statements.is_empty());
                 println!("Successfully generated invite proof");
             }
             Err(e) => {
@@ -1063,7 +1068,7 @@ mod tests {
         let invite_pod = match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
-                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty()); // Either way is valid
+                assert!(!pod.public_statements.is_empty());
                 println!("Successfully generated invite proof");
                 pod
             }
@@ -1080,7 +1085,7 @@ mod tests {
         match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
-                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty()); // Either way is valid
+                assert!(!pod.public_statements.is_empty());
                 println!("Successfully generated accept invite proof");
                 pod
             }
@@ -1119,7 +1124,7 @@ mod tests {
         let invite_pod = match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
-                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty()); // Either way is valid
+                assert!(!pod.public_statements.is_empty());
                 println!("Successfully generated invite proof");
                 pod
             }
@@ -1136,7 +1141,7 @@ mod tests {
         let accept_invite_pod = match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
-                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty()); // Either way is valid
+                assert!(!pod.public_statements.is_empty());
                 println!("Successfully generated accept invite proof");
                 pod
             }
@@ -1152,7 +1157,7 @@ mod tests {
         match result {
             Ok(pod) => {
                 // Verify we got a valid pod back
-                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty()); // Either way is valid
+                assert!(!pod.public_statements.is_empty());
                 println!("Successfully generated update state proof");
                 pod
             }
@@ -1199,7 +1204,7 @@ mod tests {
             Ok(pod) => {
                 println!("Successfully generated is_admin proof for admin");
                 // Verify we got a valid pod back
-                assert!(!pod.public_statements.is_empty() || pod.public_statements.is_empty());
+                assert!(!pod.public_statements.is_empty());
             }
             Err(e) => {
                 panic!("Proof was not generated for admin: {:?}", e);
@@ -1242,9 +1247,9 @@ mod tests {
         new_state.add_post(post.clone());
 
         // Test the add_post proof generation
-        let result = prover
+        assert!(!prover
             .prove_add_post(&old_state, &new_state, &signature)
-            .expect("Failed to prove add_post");
+            .expect("Failed to prove add_post").public_statements.is_empty());
 
         // Verify the state changes are correct
         assert_eq!(old_state.posts.len(), 0);

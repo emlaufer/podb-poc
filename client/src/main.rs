@@ -82,6 +82,8 @@ enum Commands {
         /// Path to the author's private key file
         #[arg(long)]
         author_key: PathBuf,
+
+        author_name: String,
     },
 
     /// Check server status
@@ -383,6 +385,7 @@ impl PodobClient {
         &self,
         content: String,
         author_key_path: &PathBuf,
+        author_name: String,
     ) -> Result<AddPostResponse> {
         // Load author private key from JSON
         let author_key_json = fs::read_to_string(author_key_path)
@@ -395,6 +398,7 @@ impl PodobClient {
         let post = Post {
             content,
             author: author_public_key,
+            author_name,
         };
         let signature = Signer(author_secret).sign(post.clone().to_raw_value());
 
@@ -633,9 +637,10 @@ async fn main() -> Result<()> {
         Commands::AddPost {
             content,
             author_key,
+            author_name,
         } => {
             println!("Adding post to membership system...");
-            let response = client.add_post(content, &author_key).await?;
+            let response = client.add_post(content, &author_key, author_name).await?;
 
             if response.success {
                 println!("✓ Post successfully added!");

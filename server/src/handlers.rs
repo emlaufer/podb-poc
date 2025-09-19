@@ -7,10 +7,15 @@ use lib::membership::{
     MembershipError, MembershipProver, MembershipState, MembershipVerifier, Post,
 };
 use lib::public_log::PublicLog;
+use lib::utils::ToPodValue;
 use pod2::frontend::MainPod;
-use pod2::middleware::{PublicKey, Signature};
+use pod2::middleware::{
+    PublicKey, Signature,
+    containers::{Dictionary, Set},
+};
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -19,6 +24,7 @@ use tracing::{error, info, instrument};
 #[derive(Debug)]
 pub struct MembershipService {
     current_state: MembershipState,
+    posts_index: HashMap<String, HashSet<Post>>,
     prover: MembershipProver,
     verifier: MembershipVerifier,
     public_log: PublicLog,
@@ -28,6 +34,7 @@ impl MembershipService {
     pub fn new() -> Self {
         Self {
             current_state: MembershipState::default(),
+            posts_index: HashMap::new(),
             prover: MembershipProver::new(),
             verifier: MembershipVerifier::new(),
             public_log: PublicLog::new(),
@@ -44,6 +51,7 @@ impl MembershipService {
 
         let mut service = Self {
             current_state: initial_state,
+            posts_index: HashMap::new(),
             prover: MembershipProver::new(),
             verifier: MembershipVerifier::new(),
             public_log: PublicLog::new(),
@@ -115,9 +123,13 @@ impl MembershipService {
         let new_state_commitment = new_state.commitment();
 
         // Generate update proof
-        let update_proof =
+        let add_member_proof =
             self.prover
                 .prove_add_member(&self.current_state, &new_state, accept_invite_pod)?;
+        let update_proof = self
+            .prover
+            .prove_update_state(&self.current_state, &new_state, add_member_proof)
+            .unwrap();
 
         // Update current state
         self.current_state = new_state;
@@ -170,6 +182,7 @@ impl MembershipService {
 
         // Get old state commitment
         let old_state_commitment = self.current_state.commitment();
+        let old_state = self.current_state.clone();
 
         // Create new state with added post
         let mut new_state = self.current_state.clone();
@@ -177,12 +190,17 @@ impl MembershipService {
         let new_state_commitment = new_state.commitment();
 
         // Generate add_post proof
-        let update_proof =
+        let add_post_proof =
             self.prover
                 .prove_add_post(&self.current_state, &new_state, &signature)?;
+        let update_proof = self.prover.prove_update_state(
+            &self.current_state,
+            &new_state,
+            add_post_proof.clone(),
+        )?;
 
         // Update current state
-        self.current_state = new_state;
+        self.current_state = new_state.clone();
 
         // Publish to public log
         let timestamp = SystemTime::now()
@@ -202,6 +220,23 @@ impl MembershipService {
         } else {
             info!("Published add_post to public log");
         }
+
+        // update the posts index
+        let mut new_posts_index = self.posts_index.clone();
+        new_posts_index
+            .entry(post.author_name.clone())
+            .or_default()
+            .insert(post.clone());
+
+        let update_index_proof = self.prover.prove_add_post_index(
+            self.posts_index.clone(),
+            new_posts_index,
+            &old_state,
+            &new_state,
+            post,
+            add_post_proof,
+        )?;
+        println!("GOT PROOF: {}", update_index_proof);
 
         Ok((update_proof, old_state_commitment, new_state_commitment))
     }

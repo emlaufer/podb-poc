@@ -16,6 +16,7 @@ pub struct Predicates {
     pub membership: Arc<CustomPredicateBatch>,
     pub post: Arc<CustomPredicateBatch>,
     pub query: Arc<CustomPredicateBatch>,
+    pub index: Arc<CustomPredicateBatch>,
 }
 
 impl Predicates {
@@ -44,11 +45,21 @@ impl Predicates {
         .unwrap()
         .custom_batch;
 
+        let index_batch_content = index_predicates(membership_batch.clone(), post_batch.clone());
+        let index_batch = parse(
+            &index_batch_content,
+            params,
+            &[membership_batch.clone(), post_batch.clone()],
+        )
+        .unwrap()
+        .custom_batch;
+
         Self {
             state: state_batch,
             membership: membership_batch,
             post: post_batch,
             query: query_batch,
+            index: index_batch,
         }
     }
 }
@@ -67,9 +78,9 @@ init_state(state) = AND(
     DictContains(state, "posts", 0)
 )
 
-update_state(old_state, new_state) = OR(
+update_state(old_state, new_state, private: post) = OR(
     add_member(old_state, new_state)
-    add_post(old_state, new_state)
+    add_post(old_state, new_state, post)
 )"#,
         membership_batch.id().encode_hex::<String>(),
         post_batch.id().encode_hex::<String>(),
@@ -117,14 +128,14 @@ pub fn post_predicates(query_batch: Arc<CustomPredicateBatch>) -> String {
 use _, is_member, _ from 0x{}
 
 // I split this from add_post to avoid going over the custom statement arity limit
-valid_post(post, author_pk) = AND(
+valid_post(state, post, private: author_pk) = AND(
     DictContains(post, "author", author_pk)
     SignedBy(post, author_pk)
+    is_member(state, author_pk) 
 )
 
-add_post(old_state, new_state, private: post, author_pk, old_posts, new_posts) = AND(
-    valid_post(post, author_pk)
-    is_member(old_state, author_pk) 
+add_post(old_state, new_state, post, private: old_posts, new_posts) = AND(
+    valid_post(old_state, post)
     SetInsert(new_posts, old_posts, post)
     DictContains(old_state, "posts", old_posts)
     DictUpdate(new_state, old_state, "posts", new_posts)
@@ -152,4 +163,35 @@ is_not_member(state, member_pk, private: member_set) = AND(
     SetNotContains(member_set, member_pk)
 )
 "#
+}
+
+pub fn index_predicates(
+    member_batch: Arc<CustomPredicateBatch>,
+    post_batch: Arc<CustomPredicateBatch>,
+) -> String {
+    format!(
+        r#"
+use _, _, _, add_member from 0x{}
+use _, add_post from 0x{}
+
+update_posts_index(old_index, new_index, new_state, old_state) = OR(
+    index_add_post(old_index, new_index, old_state, new_state)
+    index_add_member(old_index, new_index, old_state, new_state)
+)
+
+index_add_post(old_index, new_index, old_state, new_state, private: post, new_user_set, old_user_set) = AND(
+    SetInsert(new_user_set, old_user_set, post)
+    DictContains(old_index, post["author_name"], old_user_set)
+    DictUpdate(new_index, old_index, post["author_name"], post)
+    add_post(old_state, new_state, post)
+)
+
+index_add_member(old_index, new_index, new_state, old_state) = AND(
+    Equal(new_index, old_index)
+    add_member(old_state, new_state)
+)
+"#,
+        member_batch.id().encode_hex::<String>(),
+        post_batch.id().encode_hex::<String>()
+    )
 }

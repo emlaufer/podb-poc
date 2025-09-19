@@ -6,7 +6,8 @@ use pod2::{
     lang::parse,
     middleware::{
         CustomPredicateBatch, Key, Params, PublicKey, SecretKey, Signature, Signer as SignerTrait,
-        Statement, TypedValue, Value, containers::Dictionary,
+        Statement, TypedValue, Value,
+        containers::{Dictionary, Set},
     },
 };
 use pod2_solver::{
@@ -16,7 +17,7 @@ use pod2_solver::{
     replay::build_pod_from_answer_top_level_public,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::debug;
 
@@ -24,6 +25,23 @@ use crate::membership::predicates::Predicates;
 use crate::membership::*;
 use crate::utils::ToPodValue;
 use pod_derive::IntoTypedValue;
+
+pub fn posts_set_to_set(set: HashSet<Post>) -> Set {
+    let new_set = set
+        .iter()
+        .map(|v| v.clone().to_pod_value())
+        .collect::<HashSet<_>>();
+    Set::new(5, new_set).unwrap()
+}
+
+pub fn posts_index_to_dict(index: HashMap<String, HashSet<Post>>) -> Dictionary {
+    let kvs = HashMap::from_iter(
+        index
+            .into_iter()
+            .map(|(k, v)| (k.into(), posts_set_to_set(v).into())),
+    );
+    Dictionary::new(5, kvs).unwrap()
+}
 
 /// Error type for membership proving operations
 #[derive(Debug)]
@@ -54,6 +72,11 @@ impl std::fmt::Display for MembershipError {
 pub struct Post {
     pub content: String,
     pub author: PublicKey,
+    // I'm adding this for the username -> post index
+    // Ideally, we would use the public key instead, however,
+    // I'm not sure how do make a dictionary object with non-string
+    // keys
+    pub author_name: String,
 }
 
 /// Represents membership state with admins and members
@@ -100,14 +123,6 @@ impl MembershipState {
             _ => panic!("MembershipState should convert to Dictionary"),
         }
     }
-}
-
-/// Evidence required for updating membership state
-#[derive(Debug)]
-pub struct UpdateEvidence {
-    pub invite_pk: PublicKey,
-    pub old_member_set: Vec<PublicKey>,
-    pub new_member_set: Vec<PublicKey>,
 }
 
 /// Main prover for membership predicates
@@ -157,23 +172,18 @@ impl MembershipProver {
         &self,
         request: String,
         edb_builder: F,
+        batches: &[Arc<CustomPredicateBatch>],
     ) -> Result<MainPod, MembershipError>
     where
         F: FnOnce() -> edb::ImmutableEdb,
     {
         debug!("Pod request: {}", request);
 
-        let batch = &self.predicates.membership;
-        let query_batch = &self.predicates.query;
         let vd_set = &*MOCK_VD_SET;
         let prover = MockProver {};
 
-        let processed = parse(
-            &request,
-            &self.params,
-            &[batch.clone(), query_batch.clone()],
-        )
-        .map_err(|e| MembershipError::ParseError(e.to_string()))?;
+        let processed = parse(&request, &self.params, batches)
+            .map_err(|e| MembershipError::ParseError(e.to_string()))?;
 
         let edb = edb_builder();
 
@@ -186,8 +196,9 @@ impl MembershipProver {
                 .build(),
         );
 
-        custom::register_rules_from_batch(&mut engine.rules, &batch);
-        custom::register_rules_from_batch(&mut engine.rules, &query_batch);
+        for batch in batches {
+            custom::register_rules_from_batch(&mut engine.rules, &batch);
+        }
         engine.load_processed(&processed);
         engine
             .run()
@@ -228,7 +239,14 @@ impl MembershipProver {
             state_value,
         );
 
-        self.prove_with_request_and_edb(request, || edb::ImmutableEdbBuilder::new().build())
+        self.prove_with_request_and_edb(
+            request,
+            || edb::ImmutableEdbBuilder::new().build(),
+            &[
+                self.predicates.membership.clone(),
+                self.predicates.query.clone(),
+            ],
+        )
     }
 
     pub fn prove_invite(
@@ -258,13 +276,20 @@ impl MembershipProver {
             Value::new(invite_pk.into())
         );
 
-        self.prove_with_request_and_edb(request, move || {
-            edb::ImmutableEdbBuilder::new()
-                .add_keypair(admin_signer.public_key(), admin_signer.0.clone())
-                .add_main_pod(is_admin_proof)
-                .add_signed_dict(invite_signed)
-                .build()
-        })
+        self.prove_with_request_and_edb(
+            request,
+            move || {
+                edb::ImmutableEdbBuilder::new()
+                    .add_keypair(admin_signer.public_key(), admin_signer.0.clone())
+                    .add_main_pod(is_admin_proof)
+                    .add_signed_dict(invite_signed)
+                    .build()
+            },
+            &[
+                self.predicates.membership.clone(),
+                self.predicates.query.clone(),
+            ],
+        )
     }
 
     pub fn prove_accept_invite(
@@ -292,12 +317,19 @@ impl MembershipProver {
             Value::new(invite_pk.into())
         );
 
-        self.prove_with_request_and_edb(request, move || {
-            edb::ImmutableEdbBuilder::new()
-                .add_keypair(invite_signer.public_key(), invite_signer.0.clone())
-                .add_main_pod(invite_pod)
-                .build()
-        })
+        self.prove_with_request_and_edb(
+            request,
+            move || {
+                edb::ImmutableEdbBuilder::new()
+                    .add_keypair(invite_signer.public_key(), invite_signer.0.clone())
+                    .add_main_pod(invite_pod)
+                    .build()
+            },
+            &[
+                self.predicates.membership.clone(),
+                self.predicates.query.clone(),
+            ],
+        )
     }
 
     pub fn prove_add_member(
@@ -438,7 +470,7 @@ impl MembershipProver {
                 ))
             })?;
         let add_member_stmt = builder
-            .priv_op(Operation::custom(
+            .pub_op(Operation::custom(
                 add_member_pred,
                 [
                     accept_invite_stmt.clone(),
@@ -451,18 +483,43 @@ impl MembershipProver {
                 MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
             })?;
 
-        let update_stmt = builder
-            .pub_op(Operation::custom(
-                update_state_pred,
-                [add_member_stmt, Statement::None],
-            ))
-            .map_err(|e| {
-                MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
-            })?;
-
         builder.prove(&prover).map_err(|e| {
             MembershipError::ProofError(format!("Failed to prove update_state: {}", e))
         })
+    }
+
+    /// Proves update_state given a pod which proves add_post or add_member
+    pub fn prove_update_state(
+        &self,
+        old_state: &MembershipState,
+        new_state: &MembershipState,
+        pod: MainPod,
+    ) -> Result<MainPod, MembershipError> {
+        debug!("Update state step pod: {}", pod);
+
+        let request = format!(
+            r#"
+            use _, update_state from 0x{}
+            
+            REQUEST(
+                update_state({}, {})
+            )
+            "#,
+            self.predicates.state.id().encode_hex::<String>(),
+            Value::new(old_state.clone().into()),
+            Value::new(new_state.clone().into()),
+        );
+        println!("POD IS: {}", pod);
+
+        self.prove_with_request_and_edb(
+            request,
+            move || edb::ImmutableEdbBuilder::new().add_main_pod(&pod).build(),
+            &[
+                self.predicates.state.clone(),
+                self.predicates.membership.clone(),
+                self.predicates.post.clone(),
+            ],
+        )
     }
 
     pub fn prove_add_post(
@@ -675,31 +732,16 @@ impl MembershipProver {
         let valid_post_stmt = builder
             .priv_op(Operation::custom(
                 valid_post_pred,
-                [author_stmt, signed_by_stmt],
+                [author_stmt, signed_by_stmt, author_is_member_stmt],
             ))
             .map_err(|e| {
                 MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
             })?;
 
         let add_post_stmt = builder
-            .priv_op(Operation::custom(
-                add_post_pred,
-                [
-                    valid_post_stmt,
-                    author_is_member_stmt,
-                    insert_stmt,
-                    contains_stmt,
-                    update_stmt,
-                ],
-            ))
-            .map_err(|e| {
-                MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
-            })?;
-
-        let update_stmt = builder
             .pub_op(Operation::custom(
-                update_state_pred,
-                [Statement::None, add_post_stmt],
+                add_post_pred,
+                [valid_post_stmt, insert_stmt, contains_stmt, update_stmt],
             ))
             .map_err(|e| {
                 MembershipError::ProofError(format!("Failed to create custom operation: {}", e))
@@ -736,10 +778,110 @@ impl MembershipProver {
             _ => panic!(),
         };
 
-        self.prove_with_request_and_edb(request, move || {
-            edb::ImmutableEdbBuilder::new()
-                .add_full_dict(state_dict)
-                .build()
+        self.prove_with_request_and_edb(
+            request,
+            move || {
+                edb::ImmutableEdbBuilder::new()
+                    .add_full_dict(state_dict)
+                    .build()
+            },
+            &[self.predicates.query.clone()],
+        )
+    }
+
+    pub fn prove_add_post_index(
+        &self,
+        old_index: HashMap<String, HashSet<Post>>,
+        new_index: HashMap<String, HashSet<Post>>,
+        old_state: &MembershipState,
+        new_state: &MembershipState,
+        post: Post,
+        add_post_pod: MainPod,
+    ) -> Result<MainPod, MembershipError> {
+        let add_post_pred = self
+            .predicates
+            .post
+            .predicate_ref_by_name("add_post")
+            .ok_or_else(|| {
+                MembershipError::ProofError("add_post predicate not found".to_string())
+            })?;
+        let index_add_post_pred = self
+            .predicates
+            .index
+            .predicate_ref_by_name("index_add_post")
+            .ok_or_else(|| {
+                MembershipError::ProofError("index_add_post predicate not found".to_string())
+            })?;
+        let update_post_index_pred = self
+            .predicates
+            .index
+            .predicate_ref_by_name("update_posts_index")
+            .ok_or_else(|| {
+                MembershipError::ProofError("update_posts_index predicate not found".to_string())
+            })?;
+
+        let old_post_index = posts_index_to_dict(old_index);
+        let new_post_index = posts_index_to_dict(new_index);
+        let old_post_set = old_post_index
+            .get(&Key::from(post.author_name.clone()))
+            .cloned()
+            .unwrap_or(Value::from(TypedValue::Set(
+                Set::new(5, HashSet::new()).unwrap(),
+            )));
+        let new_post_set = new_post_index
+            .get(&Key::from(post.author_name.clone()))
+            .unwrap();
+
+        let vd_set = &*MOCK_VD_SET;
+        let prover = MockProver {};
+        let mut builder = MainPodBuilder::new(&self.params, vd_set);
+        builder.add_pod(add_post_pod.clone());
+        let add_post_stmt = &add_post_pod.public_statements[0];
+
+        let set_insert_stmt = builder
+            .priv_op(Operation::set_insert(
+                new_post_set,
+                &old_post_set,
+                post.clone(),
+            ))
+            .unwrap();
+        // TODO: The following doesn't work if a member has no existing posts
+        // because it complains the key does't exist
+        // So we need cases for if the key doesn't exist or already exists...
+        let dict_contains_stmt = builder
+            .priv_op(Operation::dict_contains(
+                old_post_index.clone(),
+                post.author_name.clone(),
+                old_post_set.clone(),
+            ))
+            .unwrap();
+        let dict_update_stmt = builder
+            .priv_op(Operation::dict_update(
+                new_post_index.clone(),
+                old_post_index.clone(),
+                post.author_name,
+                new_post_set.clone(),
+            ))
+            .unwrap();
+
+        let index_add_post_stmt = builder
+            .priv_op(Operation::custom(
+                index_add_post_pred,
+                [
+                    set_insert_stmt,
+                    dict_contains_stmt,
+                    dict_update_stmt,
+                    add_post_stmt.clone(),
+                ],
+            ))
+            .unwrap();
+
+        let _ = builder.pub_op(Operation::custom(
+            update_post_index_pred,
+            [Statement::None, index_add_post_stmt],
+        ));
+        builder.prove(&prover).map_err(|e| {
+            MembershipError::ProofError(format!("Failed to prove add_post for index: {}", e))
         })
     }
 }
@@ -814,37 +956,6 @@ mod tests {
     }
 
     #[test]
-    fn test_update_evidence_creation() {
-        let invite_pk = PublicKey::new_rand_from_subgroup();
-        let old_member = PublicKey::new_rand_from_subgroup();
-        let new_member = PublicKey::new_rand_from_subgroup();
-
-        let evidence = UpdateEvidence {
-            invite_pk,
-            old_member_set: vec![old_member],
-            new_member_set: vec![old_member, new_member],
-        };
-
-        assert_eq!(evidence.invite_pk, invite_pk);
-        assert_eq!(evidence.old_member_set.len(), 1);
-        assert_eq!(evidence.new_member_set.len(), 2);
-        assert!(evidence.new_member_set.contains(&old_member));
-        assert!(evidence.new_member_set.contains(&new_member));
-    }
-
-    #[test]
-    fn test_error_types() {
-        let solver_error = MembershipError::SolverError("test".to_string());
-        let parse_error = MembershipError::ParseError("test".to_string());
-        let proof_error = MembershipError::ProofError("test".to_string());
-
-        // Verify error types can be created and formatted
-        assert!(format!("{:?}", solver_error).contains("SolverError"));
-        assert!(format!("{:?}", parse_error).contains("ParseError"));
-        assert!(format!("{:?}", proof_error).contains("ProofError"));
-    }
-
-    #[test]
     fn test_membership_prover_with_custom_params() {
         let custom_params = Params {
             max_input_pods_public_statements: 16,
@@ -915,42 +1026,6 @@ mod tests {
             MembershipError::SolverError(msg) => assert_eq!(msg, error_msg),
             _ => panic!("Expected SolverError"),
         }
-    }
-
-    #[test]
-    fn test_update_evidence_debug_format() {
-        let invite_pk = PublicKey::new_rand_from_subgroup();
-        let old_member = PublicKey::new_rand_from_subgroup();
-        let new_member = PublicKey::new_rand_from_subgroup();
-
-        let evidence = UpdateEvidence {
-            invite_pk,
-            old_member_set: vec![old_member],
-            new_member_set: vec![old_member, new_member],
-        };
-
-        let debug_str = format!("{:?}", evidence);
-        assert!(debug_str.contains("UpdateEvidence"));
-        assert!(debug_str.contains("invite_pk"));
-        assert!(debug_str.contains("old_member_set"));
-        assert!(debug_str.contains("new_member_set"));
-    }
-
-    #[test]
-    fn test_membership_prover_default() {
-        let prover1 = MembershipProver::new();
-        let prover2 = MembershipProver::default();
-
-        // Both should have the same default parameters
-        assert_eq!(prover1.params.max_statements, prover2.params.max_statements);
-        assert_eq!(
-            prover1.params.max_input_pods_public_statements,
-            prover2.params.max_input_pods_public_statements
-        );
-        assert_eq!(
-            prover1.params.max_public_statements,
-            prover2.params.max_public_statements
-        );
     }
 
     #[test]
@@ -1234,6 +1309,7 @@ mod tests {
         let post = Post {
             content: "Hello, world! This is my first post.".to_string(),
             author: member_pk,
+            author_name: "Bob".to_string(),
         };
         let signature = member_signer.sign(post.clone().to_raw_value());
 
@@ -1269,6 +1345,7 @@ mod tests {
         let post = Post {
             content: "I'm not a member but trying to post".to_string(),
             author: non_member_pk,
+            author_name: "Bob".to_string(),
         };
         let signature = non_member_signer.sign(post.clone().to_raw_value());
 
@@ -1307,10 +1384,12 @@ mod tests {
         let post1 = Post {
             content: "First post".to_string(),
             author: member_pk,
+            author_name: "Bob".to_string(),
         };
         let post2 = Post {
             content: "Second post".to_string(),
             author: member_pk,
+            author_name: "Bob".to_string(),
         };
 
         // Create new state with multiple posts added

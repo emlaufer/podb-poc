@@ -1,12 +1,14 @@
+use std::collections::HashSet;
+
 use hex::ToHex;
+use pod_derive::IntoTypedValue;
 use pod2::{
     backends::plonky2::{mock::mainpod::MockProver, signer::Signer},
     examples::MOCK_VD_SET,
     frontend::{MainPod, MainPodBuilder, Operation, SignedDictBuilder},
     lang::parse,
     middleware::{
-        Key, Params, PublicKey, Signature, Signer as SignerTrait,
-        Statement, TypedValue, Value,
+        Key, Params, PublicKey, Signature, Signer as SignerTrait, Statement, TypedValue, Value,
     },
 };
 use pod2_solver::{
@@ -16,12 +18,9 @@ use pod2_solver::{
     replay::build_pod_from_answer_top_level_public,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use tracing::debug;
 
-use crate::membership::predicates::Predicates;
-use crate::utils::ToPodValue;
-use pod_derive::IntoTypedValue;
+use crate::{membership::predicates::Predicates, utils::ToPodValue};
 
 /// Error type for membership proving operations
 #[derive(Debug)]
@@ -611,11 +610,7 @@ impl MembershipProver {
             })?;
 
         let author_stmt = builder
-            .priv_op(Operation::dict_contains(
-                *new_post,
-                "author",
-                post_author,
-            ))
+            .priv_op(Operation::dict_contains(*new_post, "author", post_author))
             .map_err(|e| {
                 MembershipError::ProofError(format!("Failed to create set_insert operation: {}", e))
             })?;
@@ -742,7 +737,7 @@ impl Default for MembershipProver {
 
 #[cfg(test)]
 mod tests {
-    use pod2::middleware::{containers::Dictionary, SecretKey};
+    use pod2::middleware::{SecretKey, containers::Dictionary};
 
     use super::*;
 
@@ -773,30 +768,41 @@ mod tests {
         state.add_admin(admin_signer.public_key());
         assert!(!state.admins.is_empty());
         assert!(state.members.is_empty());
-        assert!(!prover.prove_init_membership(&state)
-                    .expect("failed to prove init membership").public_statements.is_empty());
+        assert!(
+            !prover
+                .prove_init_membership(&state)
+                .expect("failed to prove init membership")
+                .public_statements
+                .is_empty()
+        );
 
         // 2. Admin generates an invite
         let is_admin_proof = prover
             .prove_is_admin(&state, admin_signer.public_key())
             .expect("Should be able to prove admin status");
         let state_commitment = state.commitment();
-        let invite_pod = prover.prove_invite(
-                state_commitment, invite_signer.public_key(), &admin_signer, &is_admin_proof
-            ).expect("failed to prove invite");
+        let invite_pod = prover
+            .prove_invite(
+                state_commitment,
+                invite_signer.public_key(),
+                &admin_signer,
+                &is_admin_proof,
+            )
+            .expect("failed to prove invite");
         assert!(!invite_pod.public_statements.is_empty());
 
         // 3. User accepts the invite
-        let accept_invite_pod = prover.prove_accept_invite(
-            state_commitment, &invite_signer, &invite_pod
-        ).expect("failed to prove accept invite");
+        let accept_invite_pod = prover
+            .prove_accept_invite(state_commitment, &invite_signer, &invite_pod)
+            .expect("failed to prove accept invite");
         assert!(!accept_invite_pod.public_statements.is_empty());
 
         // 4. AD adds user as a member
         let old_state = state.clone();
         state.add_member(invite_signer.public_key());
-        let add_member_pod = prover.prove_add_member(
-            &old_state, &state, &accept_invite_pod).expect("failed to prove add member");
+        let add_member_pod = prover
+            .prove_add_member(&old_state, &state, &accept_invite_pod)
+            .expect("failed to prove add member");
         assert!(!add_member_pod.public_statements.is_empty())
     }
 
@@ -1169,8 +1175,9 @@ mod tests {
 
     #[test]
     fn test_pod_serialization() {
-        use pod2::middleware::{Key, Value};
         use std::collections::HashMap;
+
+        use pod2::middleware::{Key, Value};
 
         let mut values = HashMap::new();
         values.insert(Key::from("A"), Value::from("a"));
@@ -1247,9 +1254,13 @@ mod tests {
         new_state.add_post(post.clone());
 
         // Test the add_post proof generation
-        assert!(!prover
-            .prove_add_post(&old_state, &new_state, &signature)
-            .expect("Failed to prove add_post").public_statements.is_empty());
+        assert!(
+            !prover
+                .prove_add_post(&old_state, &new_state, &signature)
+                .expect("Failed to prove add_post")
+                .public_statements
+                .is_empty()
+        );
 
         // Verify the state changes are correct
         assert_eq!(old_state.posts.len(), 0);

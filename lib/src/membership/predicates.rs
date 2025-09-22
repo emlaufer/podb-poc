@@ -5,10 +5,13 @@
 //! - Member acceptance flow
 //! - State updates with membership changes
 
-use hex::ToHex;
-use pod2::lang::parse;
-use pod2::middleware::{CustomPredicateBatch, Params};
 use std::sync::Arc;
+
+use hex::ToHex;
+use pod2::{
+    lang::parse,
+    middleware::{CustomPredicateBatch, Params},
+};
 
 #[derive(Debug)]
 pub struct Predicates {

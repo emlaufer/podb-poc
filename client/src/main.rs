@@ -1,17 +1,21 @@
+use std::{fs, path::PathBuf};
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use lib::api::{
-    AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse, PublicLogEntry,
+use lib::{
+    api::{
+        AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse, PublicLogEntry,
+    },
+    membership::{MembershipProver, MembershipVerifier, Post},
+    public_log::PublicLog,
+    utils::ToPodValue,
 };
-use lib::membership::{MembershipProver, MembershipVerifier, Post};
-use lib::public_log::PublicLog;
-use lib::utils::ToPodValue;
-use pod2::backends::plonky2::signer::Signer;
-use pod2::frontend::MainPod;
-use pod2::middleware::{PublicKey, SecretKey, Signer as SignerTrait};
+use pod2::{
+    backends::plonky2::signer::Signer,
+    frontend::MainPod,
+    middleware::{PublicKey, SecretKey, Signer as SignerTrait},
+};
 use reqwest::Client;
-use std::fs;
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "podb-client")]

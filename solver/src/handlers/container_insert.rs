@@ -364,9 +364,10 @@ pub fn register_container_insert_handlers(reg: &mut crate::op::OpRegistry) {
 
 #[cfg(test)]
 mod tests {
+    use pod2::middleware::{StatementTmplArg, Value};
+
     use super::*;
     use crate::{edb::ImmutableEdbBuilder, test_helpers::args_from, types::ConstraintStore};
-    use pod2::middleware::{StatementTmplArg, Value};
 
     #[test]
     fn test_copy_container_insert_handler() {

@@ -1,7 +1,7 @@
+use std::{fs, path::Path};
+
 use pod2::middleware::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::Path;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -134,9 +134,11 @@ fn parse_public_key_from_hex(key_str: &str) -> Result<PublicKey, ConfigError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn test_default_config() {
@@ -209,4 +211,3 @@ initial_admins = ["0x123"]
         assert_eq!(config.bind_address(), "127.0.0.1:8080");
     }
 }
-

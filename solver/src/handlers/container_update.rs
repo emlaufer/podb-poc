@@ -2,6 +2,8 @@ use pod2::middleware::{
     containers::Dictionary, Key, NativePredicate, StatementTmplArg, TypedValue,
 };
 
+// Import utilities from container_insert module
+use super::container_insert::{key_from_arg, root_from_arg};
 use super::util::{arg_to_selector, handle_copy_results};
 use crate::{
     edb::{EdbView, UpdateSource},
@@ -9,9 +11,6 @@ use crate::{
     prop::PropagatorResult,
     types::{ConstraintStore, OpTag},
 };
-
-// Import utilities from container_insert module
-use super::container_insert::{key_from_arg, root_from_arg};
 
 /// Copy existing ContainerUpdate(new_root, old_root, key, value) statements from EDB.
 pub struct CopyContainerUpdateHandler;
@@ -254,9 +253,10 @@ pub fn register_container_update_handlers(reg: &mut crate::op::OpRegistry) {
 
 #[cfg(test)]
 mod tests {
+    use pod2::middleware::{StatementTmplArg, Value};
+
     use super::*;
     use crate::{edb::ImmutableEdbBuilder, types::ConstraintStore};
-    use pod2::middleware::{StatementTmplArg, Value};
 
     #[test]
     fn test_copy_container_update_handler() {

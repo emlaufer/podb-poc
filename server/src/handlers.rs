@@ -1,17 +1,22 @@
+use std::{
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use axum::{extract::State, response::Json};
-use lib::api::{
-    AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse,
-    IsAdminProofRequest, IsAdminProofResponse, PublicLogEntry,
+use lib::{
+    api::{
+        AcceptInviteRequest, AcceptInviteResponse, AddPostRequest, AddPostResponse,
+        IsAdminProofRequest, IsAdminProofResponse, PublicLogEntry,
+    },
+    membership::{MembershipError, MembershipProver, MembershipState, MembershipVerifier, Post},
+    public_log::PublicLog,
 };
-use lib::membership::{
-    MembershipError, MembershipProver, MembershipState, MembershipVerifier, Post,
+use pod2::{
+    frontend::MainPod,
+    middleware::{PublicKey, Signature},
 };
-use lib::public_log::PublicLog;
-use pod2::frontend::MainPod;
-use pod2::middleware::{PublicKey, Signature};
 use serde::Serialize;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{error, info};
 

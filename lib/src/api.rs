@@ -1,7 +1,10 @@
-use crate::membership::Post;
-use pod2::frontend::MainPod;
-use pod2::middleware::{Hash, PublicKey, Signature};
+use pod2::{
+    frontend::MainPod,
+    middleware::{Hash, PublicKey, Signature},
+};
 use serde::{Deserialize, Serialize};
+
+use crate::membership::Post;
 
 /// Request to accept an invite
 #[derive(Debug, Deserialize, Serialize)]

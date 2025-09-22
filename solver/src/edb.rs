@@ -3,14 +3,12 @@ use std::fmt::Debug;
 use pod2::{
     frontend::{MainPod, SignedDict},
     middleware::{
-        containers::Dictionary,
-        CustomPredicateRef, Hash, Key, PublicKey, SecretKey, Statement, StatementArg,
-        Value, ValueRef,
+        containers::Dictionary, CustomPredicateRef, Hash, Key, PublicKey, SecretKey, Statement,
+        StatementArg, Value, ValueRef,
     },
 };
 use serde::{Deserialize, Serialize};
 use serde_with::{json::JsonString, serde_as};
-
 
 use crate::{types::PodRef, RawOrdValue};
 
@@ -52,8 +50,11 @@ pub trait EdbView {
         -> Vec<(Hash, Hash, InsertSource)>;
 
     /// Enumerate roots that can justify Update(new_root,old_root,key,new_val) along with their provenance.
-    fn enumerate_update_sources(&self, _key: &Key, _new_val: &Value)
-        -> Vec<(Hash, Hash, UpdateSource)>;
+    fn enumerate_update_sources(
+        &self,
+        _key: &Key,
+        _new_val: &Value,
+    ) -> Vec<(Hash, Hash, UpdateSource)>;
 
     /// Enumerate existing custom heads matching the literal mask.
     /// `filters[i] = Some(v)` requires head arg i == v; `None` matches any.
@@ -714,7 +715,11 @@ impl EdbView for ImmutableEdb {
         out
     }
 
-    fn enumerate_update_sources(&self, key: &Key, new_val: &Value) -> Vec<(Hash, Hash, UpdateSource)> {
+    fn enumerate_update_sources(
+        &self,
+        key: &Key,
+        new_val: &Value,
+    ) -> Vec<(Hash, Hash, UpdateSource)> {
         let mut out = Vec::new();
 
         // From copied statements
@@ -724,7 +729,7 @@ impl EdbView for ImmutableEdb {
                 ArgSel::Val,                               // new_root (any)
                 ArgSel::Val,                               // old_root (any)
                 ArgSel::Literal(&Value::from(key.name())), // key (specific)
-                ArgSel::Literal(new_val),                  // value (specific - this is the new value)
+                ArgSel::Literal(new_val), // value (specific - this is the new value)
             ],
         );
         for (stmt, pod_ref) in results {

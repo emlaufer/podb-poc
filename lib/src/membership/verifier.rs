@@ -1,14 +1,14 @@
+use std::sync::Arc;
+
 use hex::ToHex;
 use pod2::{
     frontend::MainPod,
     lang::parse,
     middleware::{CustomPredicateBatch, Hash, Params, PublicKey, TypedValue, Value},
 };
-use std::sync::Arc;
 use tracing::debug;
 
-use crate::membership::predicates::Predicates;
-use crate::utils::ToPodValue;
+use crate::{membership::predicates::Predicates, utils::ToPodValue};
 
 /// Error type for membership verification operations
 #[derive(Debug)]

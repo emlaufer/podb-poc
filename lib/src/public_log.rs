@@ -1,7 +1,10 @@
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufRead, BufReader, Write},
+    path::PathBuf,
+};
+
 use serde::{Deserialize, Serialize};
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
 
 #[derive(Debug)]
 pub enum PublicLogError {
@@ -101,7 +104,9 @@ impl PublicLog {
             .filter(|line| !line.trim().is_empty())
             .collect();
 
-        let line = lines.get(index).ok_or(PublicLogError::IndexOutOfBounds(index))?;
+        let line = lines
+            .get(index)
+            .ok_or(PublicLogError::IndexOutOfBounds(index))?;
         let item: T = serde_json::from_str(line)?;
 
         Ok(item)
@@ -137,9 +142,11 @@ impl Default for PublicLog {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde::{Deserialize, Serialize};
     use std::fs;
+
+    use serde::{Deserialize, Serialize};
+
+    use super::*;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct TestMessage {
@@ -149,8 +156,15 @@ mod tests {
 
     fn create_test_log() -> PublicLog {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let test_file = format!("/tmp/test_public_log_{}_{}.jsonl", std::process::id(), timestamp);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let test_file = format!(
+            "/tmp/test_public_log_{}_{}.jsonl",
+            std::process::id(),
+            timestamp
+        );
         PublicLog {
             file_path: PathBuf::from(test_file),
         }

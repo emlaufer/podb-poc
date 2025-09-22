@@ -1,18 +1,15 @@
 mod config;
 mod handlers;
 
-use axum::{
-    Router,
-    routing::post,
-};
 use std::sync::Arc;
+
+use axum::{Router, routing::post};
+use config::ServerConfig;
 use tokio::sync::RwLock;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use config::ServerConfig;
 
 #[tokio::main]
 async fn main() {
